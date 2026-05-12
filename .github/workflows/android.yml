@@ -3,11 +3,13 @@ name: Android CI
 on:
   pull_request:
     branches-ignore:
-      - 'l10n_v3_openjdk' 
+      - 'l10n_v3_openjdk'
     types: [ opened, reopened ]
   push:
     branches-ignore:
       - 'l10n_v3_openjdk'
+  schedule:
+    - cron: '0 4 * * *'   # daily 04:00 UTC — refresh APK with latest JRE artifacts
   workflow_dispatch:
 
 jobs:
