@@ -3,6 +3,10 @@
     <!-- App name part -->
     <string name="app_name" translatable="false">Amethyst</string>
 
+    <!-- RuneLite launcher strings -->
+    <string name="runelite_downloading">Downloading RuneLite…</string>
+    <string name="runelite_download_failed">Download failed</string>
+
     <!-- Action bar part -->
 
     <!-- Languages list part -->
