@@ -3,10 +3,14 @@ package net.kdt.pojavlaunch;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.os.Environment;
+import android.preference.PreferenceManager;
 import android.util.Log;
+import android.widget.Toast;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -26,10 +30,12 @@ public class RuneLiteLauncherActivity extends Activity {
     private static final String RUNELITE_URL = "https://github.com/runelite/launcher/releases/latest/download/RuneLite.jar";
     private static final String JAR_NAME = "RuneLite.jar";
     private static final String DIAG_FILENAME = "runelitedroid-diag.txt";
+    private static final String JRE17_NAME = "Internal-17";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        applyLauncherPrefs();
         File jar = new File(getFilesDir(), JAR_NAME);
         if (jar.exists() && jar.length() > 0 && isValidJar(jar)) {
             diag("cached jar OK, size=" + jar.length() + " path=" + jar.getAbsolutePath());
@@ -41,6 +47,22 @@ public class RuneLiteLauncherActivity extends Activity {
             }
             downloadAndLaunch(jar);
         }
+    }
+
+    private void applyLauncherPrefs() {
+        SharedPreferences p = PreferenceManager.getDefaultSharedPreferences(this);
+        boolean changed = false;
+        if (!JRE17_NAME.equals(p.getString("defaultRuntime", ""))) {
+            p.edit().putString("defaultRuntime", JRE17_NAME).commit();
+            changed = true;
+        }
+        if (!p.getBoolean("disable_autojre_select", false)) {
+            p.edit().putBoolean("disable_autojre_select", true).commit();
+            changed = true;
+        }
+        diag("applyLauncherPrefs changed=" + changed
+                + " defaultRuntime=" + p.getString("defaultRuntime", "")
+                + " disable_autojre_select=" + p.getBoolean("disable_autojre_select", false));
     }
 
     private boolean isValidJar(File f) {
@@ -120,6 +142,7 @@ public class RuneLiteLauncherActivity extends Activity {
     private void launchJar(File jar) {
         diag("launching jar: path=" + jar.getAbsolutePath() + " exists=" + jar.exists()
                 + " size=" + jar.length() + " canRead=" + jar.canRead());
+        Toast.makeText(this, "Launch: " + jar.length() + " bytes", Toast.LENGTH_LONG).show();
         Intent intent = new Intent(this, JavaGUILauncherActivity.class);
         intent.putExtra("javaArgs", "-jar " + jar.getAbsolutePath());
         startActivity(intent);
@@ -129,12 +152,22 @@ public class RuneLiteLauncherActivity extends Activity {
     private void diag(String msg) {
         Log.i(TAG, msg);
         try {
-            File ext = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            File ext = getExternalFilesDir(null);
+            if (ext == null) return;
             ext.mkdirs();
             File log = new File(ext, DIAG_FILENAME);
             try (FileWriter w = new FileWriter(log, true)) {
                 String ts = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date());
                 w.write(ts + " " + msg + "\n");
+            }
+            File extPub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            if (extPub != null) {
+                extPub.mkdirs();
+                File logPub = new File(extPub, DIAG_FILENAME);
+                try (FileWriter w = new FileWriter(logPub, true)) {
+                    String ts = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date());
+                    w.write(ts + " " + msg + "\n");
+                }
             }
         } catch (Throwable t) {
             Log.w(TAG, "diag write failed", t);
