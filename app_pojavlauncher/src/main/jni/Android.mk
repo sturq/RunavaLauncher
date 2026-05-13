@@ -136,3 +136,14 @@ LOCAL_LDFLAGS += -Wl,-soname,librt.so.1
 LOCAL_SRC_FILES := libcshim/libcshim.c
 include $(BUILD_SHARED_LIBRARY)
 
+# glibc's dynamic linker SONAME — rlawt's ELF references it. Android's linker is
+# /system/bin/linker64 with its own SONAME, so the glibc name goes unresolved.
+ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
+include $(CLEAR_VARS)
+LOCAL_MODULE := ldshim
+LOCAL_LDLIBS := -llog
+LOCAL_LDFLAGS += -Wl,-soname,ld-linux-aarch64.so.1
+LOCAL_SRC_FILES := libcshim/libcshim.c
+include $(BUILD_SHARED_LIBRARY)
+endif
+

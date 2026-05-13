@@ -541,7 +541,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
      *  shims by SONAME. The actual symbol resolution then comes from bionic libc
      *  (already in-process) or libmobileglues (loaded by GLshim's constructor). */
     private void preloadGLShim() {
-        String[] shims = {"GLshim", "cshim", "dlshim", "pthreadshim", "mshim", "rtshim"};
+        String[] shims = {"GLshim", "cshim", "dlshim", "pthreadshim", "mshim", "rtshim", "ldshim"};
         for (String name : shims) {
             try {
                 System.loadLibrary(name);
