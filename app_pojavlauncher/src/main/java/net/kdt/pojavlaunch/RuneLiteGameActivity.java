@@ -256,6 +256,20 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
     }
 
+    private File extractAgentJar() {
+        File dst = new File(getFilesDir(), "runelite_window_agent.jar");
+        try (java.io.InputStream in = getAssets().open("components/runelite_window_agent/runelite_window_agent.jar");
+             java.io.FileOutputStream out = new java.io.FileOutputStream(dst)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            return dst;
+        } catch (Throwable t) {
+            Log.e("RuneLiteGame", "extractAgentJar failed", t);
+            return null;
+        }
+    }
+
     private void launchRuneLite(String javaArgs) {
         try {
             File latestLogFile = new File(Tools.DIR_GAME_HOME, "latestlog.txt");
@@ -278,15 +292,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 List<String> argList = new ArrayList<>(Arrays.asList(javaArgs.split(" ")));
                 List<String> javaArgList = new ArrayList<>();
                 Tools.getCacioJavaArgs(javaArgList, runtime.javaVersion == 8, this);
-                // Window maximizer agent: hooks AWT WINDOW_OPENED events and sets every
-                // top-level Frame to MAXIMIZED_BOTH. Without this, RuneLite's JFrame stays
-                // at its default ~960x600 and we see black around it on the bigger Cacio
-                // virtual screen.
-                File agentJar = new File(Tools.DIR_DATA, "runelite_window_agent/runelite_window_agent.jar");
-                if (agentJar.isFile()) {
+                // Sync-extract the window-maximizer agent into our own files dir so we
+                // never race the async unpackComponents flow.
+                File agentJar = extractAgentJar();
+                if (agentJar != null) {
                     javaArgList.add("-javaagent:" + agentJar.getAbsolutePath());
+                    Log.i("RuneLiteGame", "javaagent=" + agentJar.getAbsolutePath() + " size=" + agentJar.length());
                 } else {
-                    Log.w("RuneLiteGame", "window-maximizer agent missing at " + agentJar);
+                    Log.w("RuneLiteGame", "window-maximizer agent could not be extracted");
                 }
                 javaArgList.addAll(argList);
                 Log.i("RuneLiteGame", "JVM args: " + javaArgList);

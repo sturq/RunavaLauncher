@@ -56,19 +56,28 @@ public class WindowMaximizerAgent {
         if (screen == null || screen.width <= 0 || screen.height <= 0) return;
         for (Frame f : frames) {
             if (f == null) continue;
-            // Frame.getFrames() returns only Frame instances, no Dialogs — Dialog
-            // extends Window directly, not Frame, so popups (FatalErrorDialog etc.)
-            // are never in this array.
+            // Frame.getFrames() returns only Frames (Dialog extends Window directly,
+            // not Frame), so popups (FatalErrorDialog etc.) are never in this array.
             if (!f.isVisible()) continue;
-            int state = f.getExtendedState();
-            if ((state & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH) continue;
             try {
-                f.setBounds(0, 0, screen.width, screen.height);
-                f.setExtendedState(state | Frame.MAXIMIZED_BOTH);
-                System.out.println("[WindowMaximizerAgent] maxed " + f.getTitle()
-                        + " -> " + screen.width + "x" + screen.height);
-            } catch (Throwable ignored) {
-                // Headless / size policies — best-effort.
+                int curW = f.getWidth();
+                int curH = f.getHeight();
+                int curX = f.getX();
+                int curY = f.getY();
+                // Always call setBounds — don't trust setExtendedState because some
+                // Caciocavallo peers report MAXIMIZED_BOTH but don't actually resize.
+                if (curW != screen.width || curH != screen.height || curX != 0 || curY != 0) {
+                    f.setLocation(0, 0);
+                    f.setSize(screen.width, screen.height);
+                    f.setExtendedState(f.getExtendedState() | Frame.MAXIMIZED_BOTH);
+                    f.validate();
+                    System.out.println("[WindowMaximizerAgent] resize '" + f.getTitle()
+                            + "' " + curW + "x" + curH + " @ " + curX + "," + curY
+                            + " -> " + screen.width + "x" + screen.height + " @ 0,0"
+                            + " (state=" + Integer.toHexString(f.getExtendedState()) + ")");
+                }
+            } catch (Throwable t) {
+                System.out.println("[WindowMaximizerAgent] resize failed: " + t);
             }
         }
     }
