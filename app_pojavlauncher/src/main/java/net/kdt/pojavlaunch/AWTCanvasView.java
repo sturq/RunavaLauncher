@@ -1,6 +1,7 @@
 package net.kdt.pojavlaunch;
 
 import android.content.*;
+import android.content.res.*;
 import android.graphics.*;
 import android.text.*;
 import android.util.*;
@@ -10,8 +11,23 @@ import java.util.*;
 import net.kdt.pojavlaunch.utils.*;
 
 public class AWTCanvasView extends TextureView implements TextureView.SurfaceTextureListener, Runnable {
-    public static final int AWT_CANVAS_WIDTH = 720;
-    public static final int AWT_CANVAS_HEIGHT = 600;
+    /** Match the device's landscape dimensions so RuneLite renders at native screen resolution.
+     *  Capped at 1920 wide to keep per-frame pixel work reasonable on slower phones. */
+    public static final int AWT_CANVAS_WIDTH;
+    public static final int AWT_CANVAS_HEIGHT;
+    static {
+        DisplayMetrics dm = Resources.getSystem().getDisplayMetrics();
+        int w = Math.max(dm.widthPixels, dm.heightPixels);
+        int h = Math.min(dm.widthPixels, dm.heightPixels);
+        if (w > 1920) {
+            h = (int) ((long) h * 1920 / w);
+            w = 1920;
+        }
+        // Fall back to old default if metrics aren't populated (edge case).
+        if (w < 320 || h < 240) { w = 720; h = 600; }
+        AWT_CANVAS_WIDTH = w;
+        AWT_CANVAS_HEIGHT = h;
+    }
     private static final int MAX_SIZE = 100;
     private static final double NANOS = 1000000000.0;
     private boolean mIsDestroyed = false;
