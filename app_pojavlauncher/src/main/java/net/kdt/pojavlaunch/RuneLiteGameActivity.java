@@ -57,10 +57,18 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private boolean mVirtualMouseEnabled;
     private float mLastTouchX, mLastTouchY;
 
-    // Two-finger gesture state for camera rotate (middle-mouse drag) + zoom (scroll wheel).
+    // Two-finger gesture state for camera rotate (arrow keys) + zoom (scroll wheel).
     private boolean mTwoFingerActive;
     private float mLastMidX, mLastMidY;
     private float mLastPinchDistance;
+    /** Per-axis arrow-held state. Indices match ARROW_KEYS: 0=LEFT, 1=RIGHT, 2=UP, 3=DOWN. */
+    private final boolean[] mArrowHeld = new boolean[4];
+    private static final int[] ARROW_KEYS = {
+            AWTInputEvent.VK_LEFT, AWTInputEvent.VK_RIGHT,
+            AWTInputEvent.VK_UP,   AWTInputEvent.VK_DOWN
+    };
+    /** Pixels of inter-frame midpoint movement required to register a camera rotation. */
+    private static final float ROTATE_DEADZONE_PX = 2f;
     /** Pixels of pinch-distance change per scroll-wheel tick. Smaller = faster zoom. */
     private static final float PINCH_PIXELS_PER_TICK = 60f;
 
@@ -224,10 +232,10 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             handleTwoFinger(event, action);
             return true;
         }
-        // Releasing the second finger ends the camera drag cleanly.
+        // Releasing the second finger ends the camera drag cleanly — let go of any held arrows.
         if (mTwoFingerActive && (action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP
                 || action == MotionEvent.ACTION_CANCEL)) {
-            AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON2_DOWN_MASK, false);
+            releaseAllArrows();
             mTwoFingerActive = false;
         }
         if (mTwoFingerActive) return true; // ignore stray single-finger events during the gesture
@@ -268,33 +276,49 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         float distance = (float) Math.hypot(x2 - x1, y2 - y1);
 
         if (!mTwoFingerActive) {
-            // Second finger just came down — anchor the gesture and press middle button at the midpoint.
+            // Second finger just came down — anchor the gesture.
             mTwoFingerActive = true;
             mLastMidX = midX;
             mLastMidY = midY;
             mLastPinchDistance = distance;
-            sendScaledMousePosition(midX, midY);
-            AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON2_DOWN_MASK, true);
             return;
         }
 
-        // Translate pinch into mouse-wheel ticks. Positive = zoom in (fingers spread), negative = zoom out.
+        float dx = midX - mLastMidX;
+        float dy = midY - mLastMidY;
+
+        // OSRS arrow keys: LEFT/RIGHT rotate the camera around the player, UP/DOWN tilt.
+        // Mapping: finger drags right → camera rotates right (RIGHT arrow). Finger drags
+        // down → camera tilts down (UP arrow in OSRS, which lowers the view angle).
+        updateArrow(0, dx < -ROTATE_DEADZONE_PX); // LEFT
+        updateArrow(1, dx >  ROTATE_DEADZONE_PX); // RIGHT
+        updateArrow(2, dy >  ROTATE_DEADZONE_PX); // UP-key when finger drags down (look further down)
+        updateArrow(3, dy < -ROTATE_DEADZONE_PX); // DOWN-key when finger drags up (look up)
+
+        // Pinch -> mouse wheel zoom. Fingers spread (positive distDelta) = zoom in.
+        // AWT scroll convention: negative y = scroll up = zoom in in OSRS.
         float distDelta = distance - mLastPinchDistance;
         if (Math.abs(distDelta) >= PINCH_PIXELS_PER_TICK) {
             int ticks = (int) (distDelta / PINCH_PIXELS_PER_TICK);
-            // Scroll convention: AWT/Java negative-y = scroll up = zoom in. OSRS follows that.
             try {
                 CallbackBridge.sendScroll(0.0, -ticks);
             } catch (Throwable ignored) {}
             mLastPinchDistance += ticks * PINCH_PIXELS_PER_TICK;
         }
 
-        // Translate two-finger pan into middle-button drag — drives OSRS camera rotation.
-        if (midX != mLastMidX || midY != mLastMidY) {
-            sendScaledMousePosition(midX, midY);
-            mLastMidX = midX;
-            mLastMidY = midY;
+        mLastMidX = midX;
+        mLastMidY = midY;
+    }
+
+    private void updateArrow(int idx, boolean shouldHold) {
+        if (mArrowHeld[idx] != shouldHold) {
+            AWTInputBridge.sendKey(' ', ARROW_KEYS[idx], shouldHold ? 1 : 0);
+            mArrowHeld[idx] = shouldHold;
         }
+    }
+
+    private void releaseAllArrows() {
+        for (int i = 0; i < mArrowHeld.length; i++) updateArrow(i, false);
     }
 
     private void sendScaledMousePosition(float x, float y) {
