@@ -5,6 +5,11 @@ public class AWTInputBridge {
     public static final int EVENT_TYPE_CURSOR_POS = 1003;
     public static final int EVENT_TYPE_KEY = 1005;
     public static final int EVENT_TYPE_MOUSE_BUTTON = 1006;
+    public static final int EVENT_TYPE_SCROLL = 1007;
+
+    public static void sendScroll(int xoffset, int yoffset) {
+        nativeSendData(EVENT_TYPE_SCROLL, xoffset, yoffset, 0, 0);
+    }
     
     public static void sendKey(char keychar, int keycode) {
         // TODO: Android -> AWT keycode mapping

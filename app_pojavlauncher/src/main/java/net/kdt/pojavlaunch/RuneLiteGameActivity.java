@@ -4,8 +4,9 @@ import android.annotation.SuppressLint;
 import android.content.ClipboardManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
-import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -29,8 +30,6 @@ import net.kdt.pojavlaunch.prefs.LauncherPreferences;
 import net.kdt.pojavlaunch.utils.JREUtils;
 import net.kdt.pojavlaunch.utils.MathUtils;
 
-import org.lwjgl.glfw.CallbackBridge;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -52,7 +51,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private TouchCharInput mKeyboardInput;
     private DrawerLayout mDrawer;
     private LoggerView mLogger;
-    private GestureDetector mGestures;
+    private final Handler mUiHandler = new Handler(Looper.getMainLooper());
 
     private boolean mVirtualMouseEnabled;
     private float mLastTouchX, mLastTouchY;
@@ -68,6 +67,9 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private float mDownX, mDownY;
     private static final float DRAG_START_PX = 14f;
     private static final float UI_ZONE_FRACTION = 0.75f; // > this fraction of canvas width = UI strip
+    private static final long LONG_PRESS_MS = 450L;       // hold this long without moving = right-click
+    private static final float LONG_PRESS_SLOP_PX = 24f;  // movement that cancels long-press
+    private static final long ARROW_REPEAT_MS = 30L;       // how often to spam arrow press while held
 
     // Two-finger gesture state for camera rotate (arrow keys) + zoom (scroll wheel).
     private boolean mTwoFingerActive;
@@ -113,8 +115,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         MainActivity.GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         mKeyboardInput.setCharacterSender(new AwtCharSender());
         mDrawer.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
-
-        mGestures = new GestureDetector(this, new GestureListener());
 
         wireMenu();
         wireCanvasTouch();
@@ -266,8 +266,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             return true;
         }
 
-        // GestureDetector handles long-press timing for us; we feed it events and read mLongPressFired.
-        mGestures.onTouchEvent(event);
         float x = event.getX(), y = event.getY();
 
         if (mVirtualMouseEnabled) {
@@ -285,25 +283,29 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 mUiZoneTouch = mCanvas.getWidth() > 0
                         && x > mCanvas.getWidth() * UI_ZONE_FRACTION;
                 sendScaledMousePosition(x, y);
+                // Custom long-press timer (generous slop, ignores small finger jitter).
+                mUiHandler.removeCallbacks(mLongPressFire);
+                mUiHandler.postDelayed(mLongPressFire, LONG_PRESS_MS);
                 break;
             case MotionEvent.ACTION_MOVE:
                 if (mCameraDragging) {
-                    // Already rotating camera — translate continued movement into arrow holds.
                     updateCameraArrowsFromDelta(x - mLastTouchX, y - mLastTouchY);
                     mLastTouchX = x;
                     mLastTouchY = y;
                     break;
                 }
                 if (mLeftButtonHeld) {
-                    // Drag-and-drop in progress — keep moving the held cursor.
                     sendScaledMousePosition(x, y);
                     break;
                 }
                 if (!mLongPressFired) {
                     float dist = (float) Math.hypot(x - mDownX, y - mDownY);
+                    // Cancel pending long-press if the finger has wandered too far.
+                    if (dist > LONG_PRESS_SLOP_PX) {
+                        mUiHandler.removeCallbacks(mLongPressFire);
+                    }
                     if (dist > DRAG_START_PX) {
                         if (mUiZoneTouch) {
-                            // UI strip: start a left-button drag from the original touch point.
                             AWTInputBridge.sendMousePos(
                                     (int) MathUtils.map(mDownX, 0, mCanvas.getWidth(), 0, AWTCanvasView.AWT_CANVAS_WIDTH),
                                     (int) MathUtils.map(mDownY, 0, mCanvas.getHeight(), 0, AWTCanvasView.AWT_CANVAS_HEIGHT));
@@ -311,7 +313,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                             mLeftButtonHeld = true;
                             sendScaledMousePosition(x, y);
                         } else {
-                            // Game world: rotate camera via arrow keys.
                             mCameraDragging = true;
                             mLastTouchX = x;
                             mLastTouchY = y;
@@ -322,6 +323,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 break;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
+                mUiHandler.removeCallbacks(mLongPressFire);
                 if (mCameraDragging) {
                     releaseAllArrows();
                     mCameraDragging = false;
@@ -335,6 +337,12 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
         return true;
     }
+
+    /** Custom long-press timer — fires unless cancelled by ACTION_UP or finger drift > slop. */
+    private final Runnable mLongPressFire = () -> {
+        mLongPressFired = true;
+        AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_DOWN_MASK);
+    };
 
     /** Same arrow-key direction mapping used by two-finger camera; shared with one-finger
      *  camera drag in the game-world zone. */
@@ -393,12 +401,15 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         updateArrow(3, dy < -ROTATE_DEADZONE_PX); // DOWN-key when finger drags up (look up)
 
         // Pinch -> mouse wheel zoom. Fingers spread (positive distDelta) = zoom in.
-        // AWT scroll convention: negative y = scroll up = zoom in in OSRS.
+        // Route via the AWT bridge — CallbackBridge.sendScroll goes to LWJGL/GLFW which
+        // RuneLite isn't listening on. AWTInputBridge.sendScroll → Cacio → RuneLite's
+        // AWT MouseWheelListener.
         float distDelta = distance - mLastPinchDistance;
         if (Math.abs(distDelta) >= PINCH_PIXELS_PER_TICK) {
             int ticks = (int) (distDelta / PINCH_PIXELS_PER_TICK);
             try {
-                CallbackBridge.sendScroll(0.0, -ticks);
+                // AWT wheel convention: positive y = scroll down = zoom OUT in OSRS.
+                AWTInputBridge.sendScroll(0, -ticks);
             } catch (Throwable ignored) {}
             mLastPinchDistance += ticks * PINCH_PIXELS_PER_TICK;
         }
@@ -411,12 +422,36 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         if (mArrowHeld[idx] != shouldHold) {
             AWTInputBridge.sendKey(' ', ARROW_KEYS[idx], shouldHold ? 1 : 0);
             mArrowHeld[idx] = shouldHold;
+            // Start the auto-repeat pump on the first held arrow; it self-terminates
+            // when no arrows remain held.
+            if (shouldHold) {
+                mUiHandler.removeCallbacks(mArrowRepeater);
+                mUiHandler.postDelayed(mArrowRepeater, ARROW_REPEAT_MS);
+            }
         }
     }
 
     private void releaseAllArrows() {
         for (int i = 0; i < mArrowHeld.length; i++) updateArrow(i, false);
+        mUiHandler.removeCallbacks(mArrowRepeater);
     }
+
+    /** OSRS treats each KEY_PRESSED as a rotation tick (like X11 auto-repeat), so a
+     *  single key-down then key-up only rotates once. Spam re-press at ~33 Hz while
+     *  any arrow is held to get smooth continuous rotation. */
+    private final Runnable mArrowRepeater = new Runnable() {
+        @Override
+        public void run() {
+            boolean any = false;
+            for (int i = 0; i < mArrowHeld.length; i++) {
+                if (mArrowHeld[i]) {
+                    AWTInputBridge.sendKey(' ', ARROW_KEYS[i], 1);
+                    any = true;
+                }
+            }
+            if (any) mUiHandler.postDelayed(this, ARROW_REPEAT_MS);
+        }
+    };
 
     private void sendScaledMousePosition(float x, float y) {
         int w = mCanvas.getWidth();
@@ -427,16 +462,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         AWTInputBridge.sendMousePos(
                 (int) MathUtils.map(x, 0, w, 0, AWTCanvasView.AWT_CANVAS_WIDTH),
                 (int) MathUtils.map(y, 0, h, 0, AWTCanvasView.AWT_CANVAS_HEIGHT));
-    }
-
-    /** Only used for long-press detection — taps and double-clicks are emitted from
-     *  ACTION_UP in onTouch so they're consistent with drag start/end ordering. */
-    private class GestureListener extends GestureDetector.SimpleOnGestureListener {
-        @Override
-        public void onLongPress(MotionEvent e) {
-            mLongPressFired = true;
-            AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_DOWN_MASK);
-        }
     }
 
     private File extractAgentJar() {
