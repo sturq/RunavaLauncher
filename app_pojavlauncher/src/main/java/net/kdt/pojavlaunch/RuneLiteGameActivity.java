@@ -60,10 +60,12 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         applyFullscreenFlags();
-        // Pick a Cacio screen size that's a good fit for RuneLite: bigger than the 720x600
-        // installer default (so plugin sidebars fit), but not so huge that RuneLite's default
-        // ~960x600 frame floats in a void of unrendered desktop. 1024x720 hits both.
-        AWTCanvasView.setManagedScreenSize(1024, 720);
+        // Keep Cacio's virtual screen at 720x600 — anything larger leaves RuneLite's
+        // default-size windows positioned within a desktop they don't fill, showing
+        // unrendered black around them. The bitmap is stretched to native res by the
+        // TextureView regardless.
+        AWTCanvasView.setManagedScreenSize(720, 600);
+        AWTCanvasView.HIDE_FPS_OVERLAY = true;
         setContentView(R.layout.activity_runelite_game);
 
         mCanvas = findViewById(R.id.rl_awt_canvas);

@@ -30,15 +30,8 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Get JRE 8
-        uses: dawidd6/action-download-artifact@v9
-        with:
-          workflow: build.yml
-          path: app_pojavlauncher/src/main/assets/components/jre
-          workflow_conclusion: completed
-          repo: AngelAuraMC/angelauramc-openjdk-build
-          branch: buildjre8
-          name: jre8-pojav
+      # JRE 8 deliberately omitted — RuneLite needs Java 11+ (compiled with major 55).
+      # The JRE 8 binpack from Pojav is ~13 MB of dead weight for our APK.
 
       - name: Get JRE17
         uses: dawidd6/action-download-artifact@v9

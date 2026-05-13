@@ -14,6 +14,9 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     public static int AWT_CANVAS_WIDTH = 720;
     public static int AWT_CANVAS_HEIGHT = 600;
 
+    /** When true, suppress the FPS overlay (drawn directly onto the Surface in run()). */
+    public static boolean HIDE_FPS_OVERLAY = false;
+
     /** Set the Cacio managed-screen / bitmap size before this view is constructed.
      *  Must be called before setContentView (i.e. before the JVM is launched too,
      *  since cacio.managed.screensize is propagated as a -D JVM arg from these). */
@@ -89,7 +92,9 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                     canvas.drawBitmap(rgbArrayBitmap, 0, 0, paint);
                     canvas.restore();
                 }
-                canvas.drawText("FPS: " + (Math.round(fps() * 10) / 10) + ", drawing=" + mDrawing, 0, 20, mFpsPaint);
+                if (!HIDE_FPS_OVERLAY) {
+                    canvas.drawText("FPS: " + (Math.round(fps() * 10) / 10) + ", drawing=" + mDrawing, 0, 20, mFpsPaint);
+                }
                 surface.unlockCanvasAndPost(canvas);
             }
         } catch (Throwable throwable) {
