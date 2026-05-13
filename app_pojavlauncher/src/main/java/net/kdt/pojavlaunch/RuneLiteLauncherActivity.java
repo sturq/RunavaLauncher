@@ -256,15 +256,18 @@ public class RuneLiteLauncherActivity extends Activity {
                 + " size=" + jar.length() + " canRead=" + jar.canRead());
         Toast.makeText(this, "Launch: " + jar.length() + " bytes", Toast.LENGTH_LONG).show();
         Intent intent = new Intent(this, RuneLiteGameActivity.class);
-        // --mode OPENGL: FORCE the GPU plugin path. AUTO let RuneLite's bestMode()
-        // probe decide, and on the last run it picked OFF — falling back to software
-        // before our Pojav GL bridge was ever consulted. OPENGL bypasses the probe;
-        // if Pojav's GLFW shim can't serve a context, we get a real stack trace
-        // instead of a silent fallback.
+        // --mode OPENGL: Java2D OpenGL backend. Doesn't enable RuneLite's GPU plugin
+        // (that's a separate runtime toggle in the in-game plugin panel) but it
+        // accelerates Swing/Java2D text & primitive drawing where possible.
         // --launch-mode REFLECT: in-process client launch (Android sandbox blocks
         // fork/exec, so the default JvmLauncher/ForkLauncher paths fail).
+        // --scale 2: enlarge the Swing UI 2x. Cacio's virtual screen is near-native
+        // resolution (sharp 3D scene), but at that res RuneLite's sidebar buttons
+        // come out tiny. --scale only scales Swing components, leaving the OSRS
+        // game canvas at its actual render size.
         intent.putExtra(RuneLiteGameActivity.EXTRA_JAVA_ARGS,
-                "-jar " + jar.getAbsolutePath() + " --mode OPENGL --launch-mode REFLECT");
+                "-jar " + jar.getAbsolutePath()
+                        + " --mode OPENGL --launch-mode REFLECT --scale 2");
         startActivity(intent);
         finish();
     }
