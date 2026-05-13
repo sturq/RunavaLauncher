@@ -17,6 +17,11 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     /** When true, suppress the FPS overlay (drawn directly onto the Surface in run()). */
     public static boolean HIDE_FPS_OVERLAY = false;
 
+    /** When true, clear with transparent instead of opaque black per-frame. Used by the
+     *  hybrid RuneLite activity so the GL surface underneath shows through where Cacio
+     *  doesn't paint pixels (e.g. the OSRS 3D game canvas area when GPU plugin is on). */
+    public static boolean TRANSPARENT_BACKGROUND = false;
+
     /** Set the Cacio managed-screen / bitmap size before this view is constructed.
      *  Must be called before setContentView (i.e. before the JVM is launched too,
      *  since cacio.managed.screensize is propagated as a -D JVM arg from these). */
@@ -103,7 +108,12 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                 }
 
                 canvas = surface.lockCanvas(null);
-                canvas.drawRGB(0, 0, 0);
+                if (TRANSPARENT_BACKGROUND) {
+                    canvas.drawColor(android.graphics.Color.TRANSPARENT,
+                            android.graphics.PorterDuff.Mode.CLEAR);
+                } else {
+                    canvas.drawRGB(0, 0, 0);
+                }
                 int[] rgbArray = JREUtils.renderAWTScreenFrame(/* canvas, mWidth, mHeight */);
                 boolean mDrawing = rgbArray != null;
                 if (rgbArray != null) {

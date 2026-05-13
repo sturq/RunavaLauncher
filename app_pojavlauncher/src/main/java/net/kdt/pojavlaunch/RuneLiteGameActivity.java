@@ -8,6 +8,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.MotionEvent;
+import android.view.Surface;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -47,11 +50,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     public static final String EXTRA_JAVA_ARGS = "javaArgs";
 
     private AWTCanvasView mCanvas;
+    private SurfaceView mGlSurface;
     private ImageView mPointer;
     private TouchCharInput mKeyboardInput;
     private DrawerLayout mDrawer;
     private LoggerView mLogger;
     private final Handler mUiHandler = new Handler(Looper.getMainLooper());
+    private volatile boolean mGlSurfaceReady;
+    private final Object mGlSurfaceReadyLock = new Object();
 
     private boolean mVirtualMouseEnabled;
     private float mLastTouchX, mLastTouchY;
@@ -107,10 +113,34 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         setContentView(R.layout.activity_runelite_game);
 
         mCanvas = findViewById(R.id.rl_awt_canvas);
+        mGlSurface = findViewById(R.id.rl_gl_surface);
         mPointer = findViewById(R.id.rl_mouse_pointer);
         mKeyboardInput = findViewById(R.id.rl_keyboard_input);
         mDrawer = findViewById(R.id.rl_drawer);
         mLogger = findViewById(R.id.rl_logger);
+
+        // Hybrid rendering: SurfaceView is the GL output target for RuneLite's GPU plugin;
+        // AWTCanvasView (TextureView) sits on top with transparency so Cacio-painted Swing
+        // UI shows over the GL-rendered game scene.
+        mCanvas.setOpaque(false);
+        AWTCanvasView.TRANSPARENT_BACKGROUND = true;
+        mGlSurface.getHolder().addCallback(new SurfaceHolder.Callback() {
+            @Override
+            public void surfaceCreated(SurfaceHolder holder) {
+                try {
+                    Log.i("RuneLiteGame", "GL surface created — installing GLFW bridge");
+                    JREUtils.setupBridgeWindow(holder.getSurface());
+                } catch (Throwable t) {
+                    Log.e("RuneLiteGame", "setupBridgeWindow failed", t);
+                }
+                synchronized (mGlSurfaceReadyLock) {
+                    mGlSurfaceReady = true;
+                    mGlSurfaceReadyLock.notifyAll();
+                }
+            }
+            @Override public void surfaceChanged(SurfaceHolder h, int f, int w, int hh) {}
+            @Override public void surfaceDestroyed(SurfaceHolder h) {}
+        });
 
         MainActivity.GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         mKeyboardInput.setCharacterSender(new AwtCharSender());
@@ -144,8 +174,17 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             mCanvas.setLayoutParams(lp);
         });
 
-        // Start the JVM after layout so the canvas surface is ready.
-        mCanvas.post(() -> launchRuneLite(getIntent().getStringExtra(EXTRA_JAVA_ARGS)));
+        // Wait for both the AWT canvas to be laid out AND the GL surface to be created
+        // (so setupBridgeWindow has already run by the time RuneLite's GPU plugin asks
+        // GLFW for a context).
+        mCanvas.post(() -> new Thread(() -> {
+            synchronized (mGlSurfaceReadyLock) {
+                while (!mGlSurfaceReady) {
+                    try { mGlSurfaceReadyLock.wait(); } catch (InterruptedException ignored) { return; }
+                }
+            }
+            runOnUiThread(() -> launchRuneLite(getIntent().getStringExtra(EXTRA_JAVA_ARGS)));
+        }, "RuneLiteGLWait").start());
     }
 
     private void applyFullscreenFlags() {

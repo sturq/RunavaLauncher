@@ -15,6 +15,14 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
+        <!-- GL surface for RuneLite's GPU plugin (3D world scene).
+             Sits behind the AWT canvas in z-order; the AWT canvas overlays
+             Swing UI on top with transparency in the game-canvas area. -->
+        <SurfaceView
+            android:id="@+id/rl_gl_surface"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
         <net.kdt.pojavlaunch.AWTCanvasView
             android:id="@+id/rl_awt_canvas"
             android:layout_width="match_parent"
