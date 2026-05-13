@@ -252,6 +252,7 @@ public class RuneLiteLauncherActivity extends Activity {
         // --mode reflect forces RuneLite's ReflectionLauncher (in-process class loading).
         // Default Fork/Jvm launchers try to spawn a child JVM, which doesn't work on Android.
         intent.putExtra("javaArgs", "-jar " + jar.getAbsolutePath() + " --mode reflect");
+        intent.putExtra("openLogOutput", true);
         startActivity(intent);
         finish();
     }
