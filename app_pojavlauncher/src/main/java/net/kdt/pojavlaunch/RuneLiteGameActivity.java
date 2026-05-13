@@ -97,16 +97,17 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         applyFullscreenFlags();
-        // Cacio's virtual screen close to device-native landscape res — the 3D scene
-        // renders at full sharpness with minimal upscale. The UI scale-up is done
-        // separately by passing --scale 2 to RuneLite (see RuneLiteLauncherActivity),
-        // which only enlarges Swing components (fonts, sidebar icons, plugin panels)
-        // without touching the game canvas resolution.
+        // Cacio at 60% — middle ground. 75% had RuneLite's sidebar icons tiny; 50% made
+        // them tappable but the OSRS canvas got soft from the upscale. 60% keeps the game
+        // sharp-ish while bumping every UI element ~67% larger than 100%.
+        // For RuneLite's Swing UI scaling specifically we also pass --scale 2 (see
+        // RuneLiteLauncherActivity). The OSRS-internal login screen UI lives inside the
+        // game canvas and only Cacio scaling reaches it.
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
         int sw = Math.max(dm.widthPixels, dm.heightPixels);
         int sh = Math.min(dm.widthPixels, dm.heightPixels);
-        // Cap at 1920 wide for per-frame pixel-pump cost on slower devices.
-        if (sw > 1920) { sh = (int)((long)sh * 1920 / sw); sw = 1920; }
+        sw = (sw * 3) / 5;
+        sh = (sh * 3) / 5;
         AWTCanvasView.setManagedScreenSize(sw, sh);
         AWTCanvasView.HIDE_FPS_OVERLAY = true;
         setContentView(R.layout.activity_runelite_game);
