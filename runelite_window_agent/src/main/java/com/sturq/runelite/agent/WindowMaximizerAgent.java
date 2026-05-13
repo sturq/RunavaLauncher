@@ -1,7 +1,6 @@
 package com.sturq.runelite.agent;
 
 import java.awt.Dimension;
-import java.awt.Dialog;
 import java.awt.Frame;
 import java.awt.Toolkit;
 import java.lang.instrument.Instrumentation;
@@ -57,7 +56,9 @@ public class WindowMaximizerAgent {
         if (screen == null || screen.width <= 0 || screen.height <= 0) return;
         for (Frame f : frames) {
             if (f == null) continue;
-            if (f instanceof Dialog) continue;
+            // Frame.getFrames() returns only Frame instances, no Dialogs — Dialog
+            // extends Window directly, not Frame, so popups (FatalErrorDialog etc.)
+            // are never in this array.
             if (!f.isVisible()) continue;
             int state = f.getExtendedState();
             if ((state & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH) continue;
