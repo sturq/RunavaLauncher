@@ -70,11 +70,13 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private boolean mLeftButtonHeld;
     private boolean mCameraDragging;   // 1-finger arrow-key drag is in progress
     private boolean mUiZoneTouch;      // touch-down was in the right-side UI strip
+    private boolean mDidMove;          // finger moved past TAP_SLOP — release should NOT fire a click
     private float mDownX, mDownY;
-    private static final float DRAG_START_PX = 14f;
-    private static final float UI_ZONE_FRACTION = 0.75f; // > this fraction of canvas width = UI strip
+    private static final float TAP_SLOP_PX = 5f;          // any move past this disables the tap-on-release
+    private static final float DRAG_START_PX = 8f;        // movement that promotes from tap to drag/camera
+    private static final float UI_ZONE_FRACTION = 0.75f;  // > this fraction of canvas width = UI strip
     private static final long LONG_PRESS_MS = 450L;       // hold this long without moving = right-click
-    private static final float LONG_PRESS_SLOP_PX = 24f;  // movement that cancels long-press
+    private static final float LONG_PRESS_SLOP_PX = 36f;  // movement that cancels long-press (natural jitter)
     private static final long ARROW_REPEAT_MS = 30L;       // how often to spam arrow press while held
 
     // Two-finger gesture state for camera rotate (arrow keys) + zoom (scroll wheel).
@@ -90,7 +92,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     /** Pixels of inter-frame midpoint movement required to register a camera rotation. */
     private static final float ROTATE_DEADZONE_PX = 2f;
     /** Pixels of pinch-distance change per scroll-wheel tick. Smaller = faster zoom. */
-    private static final float PINCH_PIXELS_PER_TICK = 60f;
+    private static final float PINCH_PIXELS_PER_TICK = 30f;
 
     @SuppressLint("ClickableViewAccessibility")
     @Override
@@ -293,8 +295,10 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             return true;
         }
 
-        // 2-finger gesture: camera + zoom. Release any in-progress 1-finger drag state first.
+        // 2-finger gesture: camera + zoom. Release any in-progress 1-finger drag state first,
+        // and cancel any pending long-press timer so a right-click doesn't fire mid-pinch.
         if (pointers >= 2) {
+            mUiHandler.removeCallbacks(mLongPressFire);
             if (mLeftButtonHeld) {
                 AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK, false);
                 mLeftButtonHeld = false;
@@ -303,6 +307,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 releaseAllArrows();
                 mCameraDragging = false;
             }
+            mDidMove = true; // 2-finger gesture means no follow-up click on release
             handleTwoFinger(event, action);
             return true;
         }
@@ -326,6 +331,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 mLongPressFired = false;
                 mLeftButtonHeld = false;
                 mCameraDragging = false;
+                mDidMove = false;
                 mDownX = x;
                 mDownY = y;
                 mUiZoneTouch = mCanvas.getWidth() > 0
@@ -348,6 +354,8 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 }
                 if (!mLongPressFired) {
                     float dist = (float) Math.hypot(x - mDownX, y - mDownY);
+                    // Any meaningful movement disqualifies the release from firing a click.
+                    if (dist > TAP_SLOP_PX) mDidMove = true;
                     // Cancel pending long-press if the finger has wandered too far.
                     if (dist > LONG_PRESS_SLOP_PX) {
                         mUiHandler.removeCallbacks(mLongPressFire);
@@ -378,7 +386,10 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 } else if (mLeftButtonHeld) {
                     AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK, false);
                     mLeftButtonHeld = false;
-                } else if (!mLongPressFired) {
+                } else if (!mLongPressFired && !mDidMove) {
+                    // Only fire a click if this was a genuine tap (no meaningful movement,
+                    // no long-press, no drag/camera transition). A swipe-that-didn't-make-it-
+                    // to-drag-threshold no longer auto-clicks.
                     AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
                 }
                 break;
