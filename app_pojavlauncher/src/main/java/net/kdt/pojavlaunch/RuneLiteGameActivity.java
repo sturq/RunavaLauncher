@@ -164,7 +164,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         getOnBackPressedDispatcher().addCallback(new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                if (mDrawer.isDrawerOpen(android.view.Gravity.END)) {
+                if (mDrawer.isDrawerOpen(android.view.Gravity.START)) {
                     mDrawer.closeDrawers();
                 } else {
                     Tools.dialogForceClose(RuneLiteGameActivity.this);
@@ -232,7 +232,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
 
     private void wireMenu() {
         Button menu = findViewById(R.id.rl_menu_button);
-        menu.setOnClickListener(v -> mDrawer.openDrawer(android.view.Gravity.END));
+        menu.setOnClickListener(v -> mDrawer.openDrawer(android.view.Gravity.START));
 
         findViewById(R.id.rl_btn_keyboard).setOnClickListener(v -> {
             mKeyboardInput.switchKeyboardState();

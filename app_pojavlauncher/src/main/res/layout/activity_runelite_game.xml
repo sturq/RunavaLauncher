@@ -50,7 +50,7 @@
             android:id="@+id/rl_menu_button"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:layout_gravity="top|end"
+            android:layout_gravity="top|start"
             android:layout_margin="8dp"
             android:alpha="0.55"
             android:background="@drawable/control_button"
@@ -68,7 +68,7 @@
     <LinearLayout
         android:layout_width="220dp"
         android:layout_height="match_parent"
-        android:layout_gravity="end"
+        android:layout_gravity="start"
         android:background="?attr/colorBackgroundFloating"
         android:orientation="vertical"
         android:padding="8dp">
