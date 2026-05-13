@@ -29,6 +29,8 @@ import net.kdt.pojavlaunch.prefs.LauncherPreferences;
 import net.kdt.pojavlaunch.utils.JREUtils;
 import net.kdt.pojavlaunch.utils.MathUtils;
 
+import org.lwjgl.glfw.CallbackBridge;
+
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -55,18 +57,28 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private boolean mVirtualMouseEnabled;
     private float mLastTouchX, mLastTouchY;
 
+    // Two-finger gesture state for camera rotate (middle-mouse drag) + zoom (scroll wheel).
+    private boolean mTwoFingerActive;
+    private float mLastMidX, mLastMidY;
+    private float mLastPinchDistance;
+    /** Pixels of pinch-distance change per scroll-wheel tick. Smaller = faster zoom. */
+    private static final float PINCH_PIXELS_PER_TICK = 60f;
+
     @SuppressLint("ClickableViewAccessibility")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         applyFullscreenFlags();
-        // Match Cacio's virtual screen to the device's landscape dimensions so RuneLite's
-        // window (which the window-maximizer agent will maximize to fill the screen)
-        // renders at native resolution — no stretching, no letterboxing.
+        // Cacio's virtual screen at 75% of device landscape dimensions. The agent
+        // maximizes RuneLite to fill it, then TextureView stretches the (smaller)
+        // bitmap to the actual screen — net effect is RuneLite's UI elements appear
+        // ~33% larger on the phone, while still using all the screen area.
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
         int sw = Math.max(dm.widthPixels, dm.heightPixels);
         int sh = Math.min(dm.widthPixels, dm.heightPixels);
-        // Cap at 1920x1080-ish so per-frame pixel work stays reasonable on slow devices.
+        sw = (sw * 3) / 4;
+        sh = (sh * 3) / 4;
+        // Cap at 1920 wide for the per-frame pixel-pump cost.
         if (sw > 1920) { sh = (int)((long)sh * 1920 / sw); sw = 1920; }
         AWTCanvasView.setManagedScreenSize(sw, sh);
         AWTCanvasView.HIDE_FPS_OVERLAY = true;
@@ -192,16 +204,39 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         mCanvas.setOnTouchListener(this);
     }
 
-    /** Direct touch mode: tap = left click at touch point, drag = drag,
-     *  long-press = right click. Virtual mouse mode (toggled): relative
-     *  finger movement moves the pointer; tap = click at pointer. */
+    /**
+     * Touch mapping:
+     *  - 1 finger tap = left click (via GestureListener.onSingleTapUp)
+     *  - 1 finger long-press = right click
+     *  - 1 finger drag = mouse hover/drag (position tracking)
+     *  - 2 fingers pan = middle-mouse drag (camera rotate in OSRS)
+     *  - 2 fingers pinch = mouse-wheel scroll (camera zoom)
+     *
+     *  Virtual mouse mode replaces direct touch with relative-movement pointer.
+     */
     @Override
     public boolean onTouch(View v, MotionEvent event) {
-        boolean gestureHandled = mGestures.onTouchEvent(event);
+        int action = event.getActionMasked();
+        int pointers = event.getPointerCount();
+
+        // 2-finger camera/zoom takes precedence — only consume gestures with one finger down.
+        if (pointers >= 2) {
+            handleTwoFinger(event, action);
+            return true;
+        }
+        // Releasing the second finger ends the camera drag cleanly.
+        if (mTwoFingerActive && (action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP
+                || action == MotionEvent.ACTION_CANCEL)) {
+            AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON2_DOWN_MASK, false);
+            mTwoFingerActive = false;
+        }
+        if (mTwoFingerActive) return true; // ignore stray single-finger events during the gesture
+
+        mGestures.onTouchEvent(event);
         float x = event.getX(), y = event.getY();
 
         if (mVirtualMouseEnabled) {
-            switch (event.getActionMasked()) {
+            switch (action) {
                 case MotionEvent.ACTION_DOWN:
                     mLastTouchX = x;
                     mLastTouchY = y;
@@ -223,6 +258,43 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             sendScaledMousePosition(x, y);
         }
         return true;
+    }
+
+    private void handleTwoFinger(MotionEvent event, int action) {
+        float x1 = event.getX(0), y1 = event.getY(0);
+        float x2 = event.getX(1), y2 = event.getY(1);
+        float midX = (x1 + x2) / 2f;
+        float midY = (y1 + y2) / 2f;
+        float distance = (float) Math.hypot(x2 - x1, y2 - y1);
+
+        if (!mTwoFingerActive) {
+            // Second finger just came down — anchor the gesture and press middle button at the midpoint.
+            mTwoFingerActive = true;
+            mLastMidX = midX;
+            mLastMidY = midY;
+            mLastPinchDistance = distance;
+            sendScaledMousePosition(midX, midY);
+            AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON2_DOWN_MASK, true);
+            return;
+        }
+
+        // Translate pinch into mouse-wheel ticks. Positive = zoom in (fingers spread), negative = zoom out.
+        float distDelta = distance - mLastPinchDistance;
+        if (Math.abs(distDelta) >= PINCH_PIXELS_PER_TICK) {
+            int ticks = (int) (distDelta / PINCH_PIXELS_PER_TICK);
+            // Scroll convention: AWT/Java negative-y = scroll up = zoom in. OSRS follows that.
+            try {
+                CallbackBridge.sendScroll(0.0, -ticks);
+            } catch (Throwable ignored) {}
+            mLastPinchDistance += ticks * PINCH_PIXELS_PER_TICK;
+        }
+
+        // Translate two-finger pan into middle-button drag — drives OSRS camera rotation.
+        if (midX != mLastMidX || midY != mLastMidY) {
+            sendScaledMousePosition(midX, midY);
+            mLastMidX = midX;
+            mLastMidY = midY;
+        }
     }
 
     private void sendScaledMousePosition(float x, float y) {
