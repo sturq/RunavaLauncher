@@ -535,6 +535,42 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
     }
 
+    /** rlawt (RuneLite's GPU plugin native lib) dlopens the dependency "libGL.so.1".
+     *  Android doesn't ship that — Pojav's GL libs are named libng_gl4es.so /
+     *  libmobileglues.so / etc. Make libGL.so.1 exist by symlinking it to Pojav's
+     *  newer GL translator (libmobileglues, supports GL 4.x — RuneLite GPU uses GL 3.3).
+     *  The symlink goes into the JRE's lib dir which is on LD_LIBRARY_PATH already. */
+    private void linkLibGLForRlawt() {
+        try {
+            String runtimeName = LauncherPreferences.PREF_DEFAULT_RUNTIME;
+            if (runtimeName == null || runtimeName.isEmpty()) return;
+            File runtimeLibDir = new File(Tools.DIR_DATA + "/runtimes/" + runtimeName + "/lib");
+            if (!runtimeLibDir.isDirectory()) {
+                Log.w("RuneLiteGame", "linkLibGL: runtime lib dir missing " + runtimeLibDir);
+                return;
+            }
+            File target = new File(Tools.NATIVE_LIB_DIR, "libmobileglues.so");
+            if (!target.isFile()) {
+                target = new File(Tools.NATIVE_LIB_DIR, "libng_gl4es.so");
+            }
+            if (!target.isFile()) {
+                Log.w("RuneLiteGame", "linkLibGL: no GL backend found in " + Tools.NATIVE_LIB_DIR);
+                return;
+            }
+            File symlink = new File(runtimeLibDir, "libGL.so.1");
+            if (symlink.exists()) {
+                // exists() returns true even for a symlink pointing at the right target;
+                // delete + recreate to keep it fresh in case the runtime was reinstalled.
+                symlink.delete();
+            }
+            android.system.Os.symlink(target.getAbsolutePath(), symlink.getAbsolutePath());
+            Log.i("RuneLiteGame", "linkLibGL: " + symlink + " -> " + target);
+            System.out.println("[RuneLiteGameActivity] libGL.so.1 -> " + target.getName());
+        } catch (Throwable t) {
+            Log.e("RuneLiteGame", "linkLibGL failed", t);
+        }
+    }
+
     private File extractAgentJar() {
         File dst = new File(getFilesDir(), "runelite_window_agent.jar");
         try (java.io.InputStream in = getAssets().open("components/runelite_window_agent/runelite_window_agent.jar");
@@ -565,6 +601,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             return;
         }
         Runtime runtime = MultiRTUtils.forceReread(LauncherPreferences.PREF_DEFAULT_RUNTIME);
+        linkLibGLForRlawt();
         new Thread(() -> {
             try {
                 JREUtils.redirectAndPrintJRELog();
