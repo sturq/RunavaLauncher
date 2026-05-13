@@ -45,6 +45,7 @@ public class RuneLiteLauncherActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         applyLauncherPrefs();
+        copyRuneLiteLogToDownloads();
         ensureJre17Async(() -> {
             File jar = new File(getFilesDir(), JAR_NAME);
             if (jar.exists() && jar.length() > 0 && isValidJar(jar)) {
@@ -248,9 +249,37 @@ public class RuneLiteLauncherActivity extends Activity {
                 + " size=" + jar.length() + " canRead=" + jar.canRead());
         Toast.makeText(this, "Launch: " + jar.length() + " bytes", Toast.LENGTH_LONG).show();
         Intent intent = new Intent(this, JavaGUILauncherActivity.class);
-        intent.putExtra("javaArgs", "-jar " + jar.getAbsolutePath());
+        // --mode reflect forces RuneLite's ReflectionLauncher (in-process class loading).
+        // Default Fork/Jvm launchers try to spawn a child JVM, which doesn't work on Android.
+        intent.putExtra("javaArgs", "-jar " + jar.getAbsolutePath() + " --mode reflect");
         startActivity(intent);
         finish();
+    }
+
+    /** Copy any existing RuneLite launcher.log into public Downloads so we can read it from outside the app. */
+    private void copyRuneLiteLogToDownloads() {
+        try {
+            File ext = getExternalFilesDir(null);
+            if (ext == null) return;
+            File rlLog = new File(ext, ".runelite/logs/launcher.log");
+            if (!rlLog.exists()) {
+                diag("no prior runelite launcher.log at " + rlLog.getAbsolutePath());
+                return;
+            }
+            File extPub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            if (extPub == null) return;
+            extPub.mkdirs();
+            File dst = new File(extPub, "runelite-launcher.log");
+            try (java.io.FileInputStream in = new java.io.FileInputStream(rlLog);
+                 FileOutputStream out = new FileOutputStream(dst)) {
+                byte[] buf = new byte[16384];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
+            diag("copied runelite log to Downloads (" + dst.length() + " bytes)");
+        } catch (Throwable t) {
+            diag("copyRuneLiteLogToDownloads failed: " + t);
+        }
     }
 
     private void diag(String msg) {
