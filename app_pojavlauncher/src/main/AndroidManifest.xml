@@ -102,7 +102,7 @@
             android:name=".RuneLiteGameActivity"
             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
             android:screenOrientation="sensorLandscape"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:theme="@style/AppTheme"
             android:exported="false" />
         <activity
             android:name=".CustomControlsActivity"
