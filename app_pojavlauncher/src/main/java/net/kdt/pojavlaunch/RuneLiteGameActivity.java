@@ -57,13 +57,17 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private boolean mVirtualMouseEnabled;
     private float mLastTouchX, mLastTouchY;
 
-    // Single-finger drag state: distinguish tap (down+up close together) from
-    // drag (down + significant movement + up). Drag holds the left button while
-    // moving, so OSRS can do drag-and-drop on inventory items, minimap drags, etc.
+    // Single-finger drag state. Touch-down position decides intent:
+    //   - touch-down in left 75% (game world)  → drag rotates camera (arrow keys)
+    //   - touch-down in right 25% (UI sidebar) → drag holds left button (drag-and-drop)
+    // Tap (no movement) is always a single left click regardless of region.
     private boolean mLongPressFired;
     private boolean mLeftButtonHeld;
+    private boolean mCameraDragging;   // 1-finger arrow-key drag is in progress
+    private boolean mUiZoneTouch;      // touch-down was in the right-side UI strip
     private float mDownX, mDownY;
     private static final float DRAG_START_PX = 14f;
+    private static final float UI_ZONE_FRACTION = 0.75f; // > this fraction of canvas width = UI strip
 
     // Two-finger gesture state for camera rotate (arrow keys) + zoom (scroll wheel).
     private boolean mTwoFingerActive;
@@ -241,11 +245,15 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             return true;
         }
 
-        // 2-finger gesture: camera + zoom. If we had a single-finger drag going, release it first.
+        // 2-finger gesture: camera + zoom. Release any in-progress 1-finger drag state first.
         if (pointers >= 2) {
             if (mLeftButtonHeld) {
                 AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK, false);
                 mLeftButtonHeld = false;
+            }
+            if (mCameraDragging) {
+                releaseAllArrows();
+                mCameraDragging = false;
             }
             handleTwoFinger(event, action);
             return true;
@@ -271,39 +279,70 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             case MotionEvent.ACTION_DOWN:
                 mLongPressFired = false;
                 mLeftButtonHeld = false;
+                mCameraDragging = false;
                 mDownX = x;
                 mDownY = y;
+                mUiZoneTouch = mCanvas.getWidth() > 0
+                        && x > mCanvas.getWidth() * UI_ZONE_FRACTION;
                 sendScaledMousePosition(x, y);
                 break;
             case MotionEvent.ACTION_MOVE:
-                sendScaledMousePosition(x, y);
-                if (!mLongPressFired && !mLeftButtonHeld) {
+                if (mCameraDragging) {
+                    // Already rotating camera — translate continued movement into arrow holds.
+                    updateCameraArrowsFromDelta(x - mLastTouchX, y - mLastTouchY);
+                    mLastTouchX = x;
+                    mLastTouchY = y;
+                    break;
+                }
+                if (mLeftButtonHeld) {
+                    // Drag-and-drop in progress — keep moving the held cursor.
+                    sendScaledMousePosition(x, y);
+                    break;
+                }
+                if (!mLongPressFired) {
                     float dist = (float) Math.hypot(x - mDownX, y - mDownY);
                     if (dist > DRAG_START_PX) {
-                        // Crossed the drag threshold — start a real left-button-held drag from
-                        // the initial touch point (so the press is registered where the user
-                        // first touched, not where they've drifted to).
-                        AWTInputBridge.sendMousePos(
-                                (int) MathUtils.map(mDownX, 0, mCanvas.getWidth(), 0, AWTCanvasView.AWT_CANVAS_WIDTH),
-                                (int) MathUtils.map(mDownY, 0, mCanvas.getHeight(), 0, AWTCanvasView.AWT_CANVAS_HEIGHT));
-                        AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK, true);
-                        mLeftButtonHeld = true;
-                        sendScaledMousePosition(x, y);
+                        if (mUiZoneTouch) {
+                            // UI strip: start a left-button drag from the original touch point.
+                            AWTInputBridge.sendMousePos(
+                                    (int) MathUtils.map(mDownX, 0, mCanvas.getWidth(), 0, AWTCanvasView.AWT_CANVAS_WIDTH),
+                                    (int) MathUtils.map(mDownY, 0, mCanvas.getHeight(), 0, AWTCanvasView.AWT_CANVAS_HEIGHT));
+                            AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK, true);
+                            mLeftButtonHeld = true;
+                            sendScaledMousePosition(x, y);
+                        } else {
+                            // Game world: rotate camera via arrow keys.
+                            mCameraDragging = true;
+                            mLastTouchX = x;
+                            mLastTouchY = y;
+                            updateCameraArrowsFromDelta(x - mDownX, y - mDownY);
+                        }
                     }
                 }
                 break;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
-                if (mLeftButtonHeld) {
+                if (mCameraDragging) {
+                    releaseAllArrows();
+                    mCameraDragging = false;
+                } else if (mLeftButtonHeld) {
                     AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK, false);
                     mLeftButtonHeld = false;
                 } else if (!mLongPressFired) {
-                    // Plain tap — short press, no movement, no long-press fire → single left click.
                     AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
                 }
                 break;
         }
         return true;
+    }
+
+    /** Same arrow-key direction mapping used by two-finger camera; shared with one-finger
+     *  camera drag in the game-world zone. */
+    private void updateCameraArrowsFromDelta(float dx, float dy) {
+        updateArrow(0, dx < -ROTATE_DEADZONE_PX); // LEFT
+        updateArrow(1, dx >  ROTATE_DEADZONE_PX); // RIGHT
+        updateArrow(2, dy >  ROTATE_DEADZONE_PX); // UP key when finger drags down (look down)
+        updateArrow(3, dy < -ROTATE_DEADZONE_PX); // DOWN key when finger drags up (look up)
     }
 
     private void handleVirtualMouse(MotionEvent event, int action, float x, float y) {
