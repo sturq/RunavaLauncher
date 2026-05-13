@@ -7,14 +7,19 @@ import android.app.ProgressDialog;
 import android.content.ClipboardManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.Toast;
+
+import java.util.ArrayList;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AlertDialog;
@@ -55,6 +60,32 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
     private GestureDetector mGestureDetector;
 
     private boolean mIsVirtualMouseEnabled;
+
+    private final ArrayList<View> mControlViews = new ArrayList<>();
+    private final Handler mHideHandler = new Handler(Looper.getMainLooper());
+    private boolean mControlsVisible = true;
+    private final Runnable mHideRunnable = () -> {
+        mControlsVisible = false;
+        for (View v : mControlViews) v.animate().alpha(0f).setDuration(250).start();
+    };
+    private void poke() {
+        if (!mControlsVisible) {
+            mControlsVisible = true;
+            for (View v : mControlViews) v.animate().alpha(1f).setDuration(150).start();
+        }
+        mHideHandler.removeCallbacks(mHideRunnable);
+        mHideHandler.postDelayed(mHideRunnable, 3000);
+    }
+    private void collectControls(View root) {
+        if (root instanceof Button) {
+            mControlViews.add(root);
+            return;
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup vg = (ViewGroup) root;
+            for (int i = 0; i < vg.getChildCount(); i++) collectControls(vg.getChildAt(i));
+        }
+    }
     
     @SuppressLint("ClickableViewAccessibility")
     @Override
@@ -99,6 +130,7 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
             float prevX = 0, prevY = 0;
             @Override
             public boolean onTouch(View v, MotionEvent event) {
+                poke();
                 // MotionEvent reports input details from the touch screen
                 // and other input controls. In this case, you are only
                 // interested in events where the touch position changed.
@@ -131,6 +163,7 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
         });
 
         mTextureView.setOnTouchListener((v, event) -> {
+            poke();
             float x = event.getX();
             float y = event.getY();
             if (mGestureDetector.onTouchEvent(event)) {
@@ -182,6 +215,11 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
                 Tools.dialogForceClose(JavaGUILauncherActivity.this);
             }
         });
+
+        // Auto-hide the installer-era control buttons so the game gets a clean canvas.
+        // Any touch on the canvas (or a button) brings them back for 3s.
+        collectControls(findViewById(android.R.id.content));
+        mHideHandler.postDelayed(mHideRunnable, 3000);
     }
 
     private void startModInstallerWithUri(Uri uri) {
@@ -279,6 +317,7 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
     @SuppressLint("ClickableViewAccessibility")
     @Override
     public boolean onTouch(View v, MotionEvent e) {
+        poke();
         boolean isDown;
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN: // 0
