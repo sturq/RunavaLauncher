@@ -3,7 +3,6 @@ package net.kdt.pojavlaunch;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
-import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
@@ -12,7 +11,9 @@ import android.preference.PreferenceManager;
 import android.util.Log;
 import android.widget.Toast;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.InputStream;
@@ -22,8 +23,13 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
+import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 public class RuneLiteLauncherActivity extends Activity {
     private static final String TAG = "RuneLiteLauncher";
@@ -74,6 +80,35 @@ public class RuneLiteLauncherActivity extends Activity {
         }
     }
 
+    /** Re-pack a zip that Android's strict ZipFile won't open (duplicate entries, etc).
+     *  Keeps the LAST occurrence of each entry name — matches OpenJDK's last-wins semantics. */
+    private void dedupeJar(File src, File dst) throws Exception {
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        int dupCount = 0;
+        try (FileInputStream fis = new FileInputStream(src);
+             ZipInputStream zis = new ZipInputStream(fis)) {
+            ZipEntry e;
+            byte[] buf = new byte[16384];
+            while ((e = zis.getNextEntry()) != null) {
+                if (e.isDirectory()) continue;
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                int n;
+                while ((n = zis.read(buf)) > 0) bos.write(buf, 0, n);
+                if (entries.put(e.getName(), bos.toByteArray()) != null) dupCount++;
+            }
+        }
+        try (FileOutputStream fos = new FileOutputStream(dst);
+             ZipOutputStream zos = new ZipOutputStream(fos)) {
+            for (Map.Entry<String, byte[]> e : entries.entrySet()) {
+                zos.putNextEntry(new ZipEntry(e.getKey()));
+                zos.write(e.getValue());
+                zos.closeEntry();
+            }
+        }
+        diag("dedupeJar: entries=" + entries.size() + " duplicatesDropped=" + dupCount
+                + " src=" + src.length() + " dst=" + dst.length());
+    }
+
     private void downloadAndLaunch(final File jar) {
         final ProgressDialog dialog = new ProgressDialog(this);
         dialog.setMessage(getString(R.string.runelite_downloading));
@@ -83,7 +118,9 @@ public class RuneLiteLauncherActivity extends Activity {
         new Thread(() -> {
             String error = null;
             File tmp = new File(jar.getAbsolutePath() + ".part");
+            File deduped = new File(jar.getAbsolutePath() + ".dedup");
             tmp.delete();
+            deduped.delete();
             long written = 0;
             int code = -1;
             String finalUrl = "";
@@ -109,17 +146,26 @@ public class RuneLiteLauncherActivity extends Activity {
                     out.flush();
                     out.getFD().sync();
                 }
-                diag("downloaded bytes=" + written + " code=" + code + " ctype=" + ctype + " finalUrl=" + finalUrl);
-                if (!isValidJar(tmp)) throw new RuntimeException("downloaded file is not a valid JAR (size=" + written + ")");
-                if (!tmp.renameTo(jar)) throw new RuntimeException("rename failed");
-                diag("rename OK, jar=" + jar.getAbsolutePath() + " size=" + jar.length());
+                diag("downloaded bytes=" + written + " code=" + code + " ctype=" + ctype);
+                File toRename = tmp;
+                if (!isValidJar(tmp)) {
+                    diag("strict ZipFile rejected raw jar — repacking");
+                    dedupeJar(tmp, deduped);
+                    if (!isValidJar(deduped)) throw new RuntimeException("repacked jar still invalid (size=" + deduped.length() + ")");
+                    tmp.delete();
+                    toRename = deduped;
+                }
+                jar.delete();
+                if (!toRename.renameTo(jar)) throw new RuntimeException("rename failed");
+                diag("jar ready, path=" + jar.getAbsolutePath() + " size=" + jar.length());
             } catch (Exception e) {
-                Log.e(TAG, "Download failed", e);
+                Log.e(TAG, "Download/repack failed", e);
                 StringWriter sw = new StringWriter();
                 e.printStackTrace(new PrintWriter(sw));
                 error = e + "\nwritten=" + written + " code=" + code + " ctype=" + ctype + "\nfinalUrl=" + finalUrl + "\n" + sw;
                 diag("download FAILED: " + error);
                 tmp.delete();
+                deduped.delete();
             }
             final String finalError = error;
             runOnUiThread(() -> {
@@ -153,12 +199,13 @@ public class RuneLiteLauncherActivity extends Activity {
         Log.i(TAG, msg);
         try {
             File ext = getExternalFilesDir(null);
-            if (ext == null) return;
-            ext.mkdirs();
-            File log = new File(ext, DIAG_FILENAME);
-            try (FileWriter w = new FileWriter(log, true)) {
-                String ts = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date());
-                w.write(ts + " " + msg + "\n");
+            if (ext != null) {
+                ext.mkdirs();
+                File log = new File(ext, DIAG_FILENAME);
+                try (FileWriter w = new FileWriter(log, true)) {
+                    String ts = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date());
+                    w.write(ts + " " + msg + "\n");
+                }
             }
             File extPub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
             if (extPub != null) {
