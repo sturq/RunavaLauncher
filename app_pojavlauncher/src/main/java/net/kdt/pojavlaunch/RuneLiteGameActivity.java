@@ -75,7 +75,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private static final float TAP_SLOP_PX = 5f;          // any move past this disables the tap-on-release
     private static final float DRAG_START_PX = 8f;        // movement that promotes from tap to drag/camera
     private static final float UI_ZONE_FRACTION = 0.75f;  // > this fraction of canvas width = UI strip
-    private static final long LONG_PRESS_MS = 450L;       // hold this long without moving = right-click
+    private static final long LONG_PRESS_MS = 350L;       // hold this long without moving = right-click
     private static final float LONG_PRESS_SLOP_PX = 36f;  // movement that cancels long-press (natural jitter)
     private static final long ARROW_REPEAT_MS = 30L;       // how often to spam arrow press while held
 
@@ -401,6 +401,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private final Runnable mLongPressFire = () -> {
         mLongPressFired = true;
         AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_DOWN_MASK);
+        Toast.makeText(this, "right-click", Toast.LENGTH_SHORT).show();
     };
 
     /** Same arrow-key direction mapping used by two-finger camera; shared with one-finger
@@ -471,6 +472,9 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 AWTInputBridge.sendScroll(0, -ticks);
             } catch (Throwable ignored) {}
             mLastPinchDistance += ticks * PINCH_PIXELS_PER_TICK;
+            final int finalTicks = ticks;
+            runOnUiThread(() -> Toast.makeText(this,
+                    "zoom " + (finalTicks > 0 ? "+" : "") + finalTicks, Toast.LENGTH_SHORT).show());
         }
 
         mLastMidX = midX;
