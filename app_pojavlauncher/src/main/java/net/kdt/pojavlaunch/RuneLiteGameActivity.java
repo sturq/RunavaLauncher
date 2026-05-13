@@ -110,6 +110,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         sh = (sh * 3) / 5;
         AWTCanvasView.setManagedScreenSize(sw, sh);
         AWTCanvasView.HIDE_FPS_OVERLAY = true;
+        AWTCanvasView.TRANSPARENT_BACKGROUND = true;
         setContentView(R.layout.activity_runelite_game);
 
         mCanvas = findViewById(R.id.rl_awt_canvas);
@@ -119,11 +120,9 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         mDrawer = findViewById(R.id.rl_drawer);
         mLogger = findViewById(R.id.rl_logger);
 
-        // Hybrid rendering: SurfaceView is the GL output target for RuneLite's GPU plugin;
-        // AWTCanvasView (TextureView) sits on top with transparency so Cacio-painted Swing
-        // UI shows over the GL-rendered game scene.
-        mCanvas.setOpaque(false);
-        AWTCanvasView.TRANSPARENT_BACKGROUND = true;
+        // AWTCanvasView is a SurfaceView now (was TextureView). For transparency
+        // it reads the TRANSPARENT_BACKGROUND flag in its constructor — flag set
+        // above before setContentView so the view sees it.
         mGlSurface.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(SurfaceHolder holder) {
