@@ -60,11 +60,15 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         applyFullscreenFlags();
-        // Keep Cacio's virtual screen at 720x600 — anything larger leaves RuneLite's
-        // default-size windows positioned within a desktop they don't fill, showing
-        // unrendered black around them. The bitmap is stretched to native res by the
-        // TextureView regardless.
-        AWTCanvasView.setManagedScreenSize(720, 600);
+        // Match Cacio's virtual screen to the device's landscape dimensions so RuneLite's
+        // window (which the window-maximizer agent will maximize to fill the screen)
+        // renders at native resolution — no stretching, no letterboxing.
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        int sw = Math.max(dm.widthPixels, dm.heightPixels);
+        int sh = Math.min(dm.widthPixels, dm.heightPixels);
+        // Cap at 1920x1080-ish so per-frame pixel work stays reasonable on slow devices.
+        if (sw > 1920) { sh = (int)((long)sh * 1920 / sw); sw = 1920; }
+        AWTCanvasView.setManagedScreenSize(sw, sh);
         AWTCanvasView.HIDE_FPS_OVERLAY = true;
         setContentView(R.layout.activity_runelite_game);
 
@@ -264,6 +268,16 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 List<String> argList = new ArrayList<>(Arrays.asList(javaArgs.split(" ")));
                 List<String> javaArgList = new ArrayList<>();
                 Tools.getCacioJavaArgs(javaArgList, runtime.javaVersion == 8, this);
+                // Window maximizer agent: hooks AWT WINDOW_OPENED events and sets every
+                // top-level Frame to MAXIMIZED_BOTH. Without this, RuneLite's JFrame stays
+                // at its default ~960x600 and we see black around it on the bigger Cacio
+                // virtual screen.
+                File agentJar = new File(Tools.DIR_DATA, "runelite_window_agent/runelite_window_agent.jar");
+                if (agentJar.isFile()) {
+                    javaArgList.add("-javaagent:" + agentJar.getAbsolutePath());
+                } else {
+                    Log.w("RuneLiteGame", "window-maximizer agent missing at " + agentJar);
+                }
                 javaArgList.addAll(argList);
                 Log.i("RuneLiteGame", "JVM args: " + javaArgList);
                 JREUtils.launchJavaVM(this, runtime, null, javaArgList, LauncherPreferences.PREF_CUSTOM_JAVA_ARGS);

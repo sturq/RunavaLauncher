@@ -1,0 +1,30 @@
+plugins {
+    id 'java-library'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+jar {
+    destinationDirectory.set(file("../app_pojavlauncher/src/main/assets/components/runelite_window_agent/"))
+    archiveBaseName.set("runelite_window_agent")
+    manifest {
+        attributes(
+                "Manifest-Version": "1.0",
+                "PreMain-Class": "com.sturq.runelite.agent.WindowMaximizerAgent",
+                "Can-Redefine-Classes": "false",
+                "Can-Retransform-Classes": "false"
+        )
+    }
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+    def versionFile = new File(project(":app_pojavlauncher").projectDir,
+            "src/main/assets/components/runelite_window_agent/version")
+    def jarFile = archiveFile.get().asFile
+    doLast {
+        writeVersionFile(jarFile, versionFile)
+    }
+    outputs.file(versionFile)
+}
