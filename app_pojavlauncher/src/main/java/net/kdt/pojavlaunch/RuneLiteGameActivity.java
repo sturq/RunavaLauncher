@@ -181,6 +181,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
             lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
             mCanvas.setLayoutParams(lp);
+            applyGestureExclusionRects();
         });
 
         // Wait for both the AWT canvas to be laid out AND the GL surface to be created
@@ -510,6 +511,28 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         AWTInputBridge.sendMousePos(
                 (int) MathUtils.map(x, 0, w, 0, AWTCanvasView.AWT_CANVAS_WIDTH),
                 (int) MathUtils.map(y, 0, h, 0, AWTCanvasView.AWT_CANVAS_HEIGHT));
+    }
+
+    /** Reserve the top portion of both left and right edges for our app's taps.
+     *  Android 10+ steals taps within ~20dp of the screen edges for system gestures
+     *  (back swipe especially), which makes the right-edge RuneLite UI (sidebar
+     *  toggle, plugin chevron, X close) unresponsive. setSystemGestureExclusionRects
+     *  tells the OS we'll handle touches in those rects. Android caps each rect at
+     *  200dp tall per edge, which is plenty to cover RuneLite's right-edge buttons. */
+    private void applyGestureExclusionRects() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return;
+        try {
+            int density = (int) getResources().getDisplayMetrics().density;
+            int edgeStripPx = 36 * density;
+            int barHeightPx = 200 * density;
+            java.util.List<android.graphics.Rect> rects = new java.util.ArrayList<>();
+            rects.add(new android.graphics.Rect(0, 0, edgeStripPx, barHeightPx));
+            rects.add(new android.graphics.Rect(mCanvas.getWidth() - edgeStripPx, 0,
+                    mCanvas.getWidth(), barHeightPx));
+            mCanvas.setSystemGestureExclusionRects(rects);
+        } catch (Throwable t) {
+            Log.w("RuneLiteGame", "setSystemGestureExclusionRects failed", t);
+        }
     }
 
     private File extractAgentJar() {
