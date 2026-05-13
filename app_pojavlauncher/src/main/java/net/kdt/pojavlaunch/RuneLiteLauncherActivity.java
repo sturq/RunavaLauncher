@@ -125,9 +125,16 @@ public class RuneLiteLauncherActivity extends Activity {
             p.edit().putBoolean("disable_autojre_select", true).commit();
             changed = true;
         }
+        // Pojav's ProGrade SecurityManager sandbox breaks RuneLite (it reads system props,
+        // opens files, makes HTTPS calls that the default policy doesn't allow).
+        if (p.getBoolean("java_sandbox", true)) {
+            p.edit().putBoolean("java_sandbox", false).commit();
+            changed = true;
+        }
         diag("applyLauncherPrefs changed=" + changed
                 + " defaultRuntime=" + p.getString("defaultRuntime", "")
-                + " disable_autojre_select=" + p.getBoolean("disable_autojre_select", false));
+                + " disable_autojre_select=" + p.getBoolean("disable_autojre_select", false)
+                + " java_sandbox=" + p.getBoolean("java_sandbox", true));
     }
 
     private boolean isValidJar(File f) {
@@ -249,9 +256,10 @@ public class RuneLiteLauncherActivity extends Activity {
                 + " size=" + jar.length() + " canRead=" + jar.canRead());
         Toast.makeText(this, "Launch: " + jar.length() + " bytes", Toast.LENGTH_LONG).show();
         Intent intent = new Intent(this, JavaGUILauncherActivity.class);
-        // --mode reflect forces RuneLite's ReflectionLauncher (in-process class loading).
-        // Default Fork/Jvm launchers try to spawn a child JVM, which doesn't work on Android.
-        intent.putExtra("javaArgs", "-jar " + jar.getAbsolutePath() + " --mode reflect");
+        // --mode OFF disables RuneLite's hardware-accelerated rendering — Pojav's GL stack
+        // can't service desktop AWT GL calls. ReflectionLauncher is selected automatically
+        // when Fork/Jvm fail (which they do on Android because fork/exec is blocked).
+        intent.putExtra("javaArgs", "-jar " + jar.getAbsolutePath() + " --mode OFF");
         intent.putExtra("openLogOutput", true);
         startActivity(intent);
         finish();
