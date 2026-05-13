@@ -6,6 +6,8 @@
     <!-- RuneLite launcher strings -->
     <string name="runelite_downloading">Downloading RuneLite…</string>
     <string name="runelite_download_failed">Download failed</string>
+    <string name="runelite_installing_jre">Installing Java 17 runtime…</string>
+    <string name="runelite_jre_install_failed">Java runtime install failed</string>
 
     <!-- Action bar part -->
 

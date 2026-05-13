@@ -5,11 +5,14 @@ import android.app.AlertDialog;
 import android.app.ProgressDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.AssetManager;
 import android.os.Bundle;
 import android.os.Environment;
 import android.preference.PreferenceManager;
 import android.util.Log;
 import android.widget.Toast;
+
+import net.kdt.pojavlaunch.multirt.MultiRTUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -42,17 +45,72 @@ public class RuneLiteLauncherActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         applyLauncherPrefs();
-        File jar = new File(getFilesDir(), JAR_NAME);
-        if (jar.exists() && jar.length() > 0 && isValidJar(jar)) {
-            diag("cached jar OK, size=" + jar.length() + " path=" + jar.getAbsolutePath());
-            launchJar(jar);
-        } else {
-            if (jar.exists()) {
-                diag("cached jar invalid, size=" + jar.length() + " — redownloading");
-                jar.delete();
+        ensureJre17Async(() -> {
+            File jar = new File(getFilesDir(), JAR_NAME);
+            if (jar.exists() && jar.length() > 0 && isValidJar(jar)) {
+                diag("cached jar OK, size=" + jar.length() + " path=" + jar.getAbsolutePath());
+                launchJar(jar);
+            } else {
+                if (jar.exists()) {
+                    diag("cached jar invalid, size=" + jar.length() + " — redownloading");
+                    jar.delete();
+                }
+                downloadAndLaunch(jar);
             }
-            downloadAndLaunch(jar);
+        });
+    }
+
+    private void ensureJre17Async(Runnable onReady) {
+        try {
+            String installed = MultiRTUtils.readInternalRuntimeVersion(JRE17_NAME);
+            String packaged = Tools.read(getAssets().open("components/jre-new/version"));
+            if (packaged.equals(installed)) {
+                diag("JRE 17 already installed v=" + installed);
+                onReady.run();
+                return;
+            }
+            diag("JRE 17 needs install: packaged=" + packaged + " installed=" + installed);
+        } catch (Throwable t) {
+            diag("JRE 17 version check failed: " + t);
         }
+
+        final ProgressDialog dlg = new ProgressDialog(this);
+        dlg.setMessage(getString(R.string.runelite_installing_jre));
+        dlg.setCancelable(false);
+        dlg.show();
+        new Thread(() -> {
+            String error = null;
+            try {
+                AssetManager am = getAssets();
+                String packaged = Tools.read(am.open("components/jre-new/version"));
+                String arch = Architecture.archAsString(Tools.DEVICE_ARCHITECTURE);
+                MultiRTUtils.installRuntimeNamedBinpack(
+                        am.open("components/jre-new/universal.tar.xz"),
+                        am.open("components/jre-new/bin-" + arch + ".tar.xz"),
+                        JRE17_NAME, packaged);
+                MultiRTUtils.postPrepare(JRE17_NAME);
+                diag("JRE 17 unpacked OK, arch=" + arch + " v=" + packaged);
+            } catch (Throwable t) {
+                Log.e(TAG, "JRE 17 install failed", t);
+                StringWriter sw = new StringWriter();
+                t.printStackTrace(new PrintWriter(sw));
+                error = t + "\n" + sw;
+                diag("JRE 17 install FAILED: " + error);
+            }
+            final String finalError = error;
+            runOnUiThread(() -> {
+                try { dlg.dismiss(); } catch (Throwable ignored) {}
+                if (finalError != null) {
+                    new AlertDialog.Builder(this)
+                            .setTitle(R.string.runelite_jre_install_failed)
+                            .setMessage(finalError)
+                            .setPositiveButton(android.R.string.ok, (d, w) -> finish())
+                            .show();
+                } else {
+                    onReady.run();
+                }
+            });
+        }, "JreInstall").start();
     }
 
     private void applyLauncherPrefs() {
