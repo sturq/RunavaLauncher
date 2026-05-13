@@ -88,3 +88,16 @@ include $(BUILD_SHARED_LIBRARY)
 # delete fake libs after linked
 $(info $(shell (rm $(HERE_PATH)/../jniLibs/*/libawt_headless.so)))
 
+# libGLshim — satisfies librlawt.so's libGL.so.1 NEEDED dependency.
+# Filename on disk is libGLshim.so (Android packaging only ships *.so), but
+# SONAME=libGL.so.1 is what the linker matches when rlawt asks for libGL.so.1.
+# On load it dlopens libmobileglues so the actual GL implementation lives in
+# the process and rlawt's GL symbol references resolve to it.
+LOCAL_PATH := $(HERE_PATH)
+include $(CLEAR_VARS)
+LOCAL_MODULE := GLshim
+LOCAL_LDLIBS := -ldl -llog
+LOCAL_LDFLAGS += -Wl,-soname,libGL.so.1
+LOCAL_SRC_FILES := libGLshim/libGLshim.c
+include $(BUILD_SHARED_LIBRARY)
+

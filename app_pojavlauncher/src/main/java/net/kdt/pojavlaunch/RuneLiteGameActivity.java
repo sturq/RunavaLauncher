@@ -535,55 +535,19 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
     }
 
-    /** rlawt (RuneLite's GPU plugin native lib) dlopens dependency "libGL.so.1".
-     *  Android doesn't ship that — Pojav's GL libs are named libmobileglues.so /
-     *  libng_gl4es.so. Two prongs:
-     *    (a) Symlink/copy libGL.so.1 in every writable path we have, on the off
-     *        chance one of them is searched by the linker namespace.
-     *    (b) System.load() libmobileglues.so directly so the symbols are present
-     *        in the process when rlawt later asks for them.
-     */
-    private void linkLibGLForRlawt() {
-        File target = new File(Tools.NATIVE_LIB_DIR, "libmobileglues.so");
-        if (!target.isFile()) target = new File(Tools.NATIVE_LIB_DIR, "libng_gl4es.so");
-        if (!target.isFile()) {
-            Log.w("RuneLiteGame", "linkLibGL: no GL backend found in " + Tools.NATIVE_LIB_DIR);
-            return;
-        }
-        System.out.println("[RuneLiteGameActivity] libGL.so.1 backend = " + target.getName());
-
-        // Prong (b): pre-load into the process so dlopen-by-name might find it
-        // among already-loaded libraries.
+    /** Pre-load libGLshim.so. The file is named libGLshim.so on disk (Android only
+     *  packages *.so) but built with SONAME=libGL.so.1 — so when rlawt's NEEDED
+     *  list is resolved, the linker matches by SONAME and finds our already-loaded
+     *  shim. The shim itself dlopens libmobileglues at construction time, putting
+     *  the real GL implementation symbols in the process for rlawt to link
+     *  against. This is the Pojav-pattern for satisfying versioned SO names that
+     *  Android packaging won't let us ship literally. */
+    private void preloadGLShim() {
         try {
-            System.load(target.getAbsolutePath());
-            System.out.println("[RuneLiteGameActivity] System.load(" + target.getName() + ") OK");
+            System.loadLibrary("GLshim");
+            Log.i("RuneLiteGame", "GLshim preloaded — librlawt should now resolve libGL.so.1");
         } catch (Throwable t) {
-            System.out.println("[RuneLiteGameActivity] System.load failed: " + t);
-        }
-
-        // Prong (a): symlink in every writable location we have access to.
-        String runtimeName = LauncherPreferences.PREF_DEFAULT_RUNTIME;
-        java.util.List<File> linkDirs = new java.util.ArrayList<>();
-        linkDirs.add(getFilesDir());
-        linkDirs.add(getCacheDir());
-        // Same dir librlawt.so gets extracted to — Java's nativeLibrary cache.
-        linkDirs.add(new File(getCacheDir().getParentFile(), "code_cache"));
-        if (runtimeName != null && !runtimeName.isEmpty()) {
-            linkDirs.add(new File(Tools.DIR_DATA + "/runtimes/" + runtimeName + "/lib"));
-        }
-        linkDirs.add(new File(Tools.DIR_DATA + "/lwjgl-3.3.3-natives/arm64-v8a"));
-
-        for (File dir : linkDirs) {
-            try {
-                if (!dir.isDirectory()) dir.mkdirs();
-                if (!dir.isDirectory()) continue;
-                File symlink = new File(dir, "libGL.so.1");
-                if (symlink.exists()) symlink.delete();
-                android.system.Os.symlink(target.getAbsolutePath(), symlink.getAbsolutePath());
-                System.out.println("[RuneLiteGameActivity] linked " + symlink);
-            } catch (Throwable t) {
-                System.out.println("[RuneLiteGameActivity] link in " + dir + " failed: " + t);
-            }
+            Log.e("RuneLiteGame", "GLshim preload failed", t);
         }
     }
 
@@ -617,7 +581,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             return;
         }
         Runtime runtime = MultiRTUtils.forceReread(LauncherPreferences.PREF_DEFAULT_RUNTIME);
-        linkLibGLForRlawt();
+        preloadGLShim();
         new Thread(() -> {
             try {
                 JREUtils.redirectAndPrintJRELog();
