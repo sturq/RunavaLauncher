@@ -1,59 +1,74 @@
 package com.sturq.runelite.agent;
 
-import java.awt.AWTEvent;
 import java.awt.Dimension;
+import java.awt.Dialog;
 import java.awt.Frame;
 import java.awt.Toolkit;
-import java.awt.Window;
-import java.awt.event.AWTEventListener;
-import java.awt.event.WindowEvent;
 import java.lang.instrument.Instrumentation;
 
 /**
- * Java agent that maximizes top-level Swing/AWT Frames as soon as they open.
- * Loaded via -javaagent:runelite_window_agent.jar in the RuneLite launch path,
- * so RuneLite's main JFrame fills the Caciocavallo virtual screen instead of
- * sitting at its default ~960x600 size with black dead space around it.
+ * Java agent that force-maximizes top-level Swing/AWT Frames. Loaded via
+ * -javaagent in the RuneLite launch path so RuneLite's main JFrame fills
+ * the Caciocavallo virtual screen instead of sitting at its default size
+ * with black around it.
  *
- * Skips dialogs (FatalErrorDialog, settings popups) — those should keep their
- * natural size.
+ * Implementation: a daemon thread that polls Frame.getFrames() and sets
+ * MAXIMIZED_BOTH on anything visible that isn't already maximized. Event-
+ * listener approach (addAWTEventListener) was unreliable at premain time
+ * because AWT isn't fully initialized yet. Polling is dumb but robust.
  */
 public class WindowMaximizerAgent {
 
     public static void premain(String agentArgs, Instrumentation inst) {
-        install();
+        startPoller();
     }
 
     public static void agentmain(String agentArgs, Instrumentation inst) {
-        install();
+        startPoller();
     }
 
-    private static void install() {
-        try {
-            Toolkit tk = Toolkit.getDefaultToolkit();
-            tk.addAWTEventListener(new AWTEventListener() {
-                @Override
-                public void eventDispatched(AWTEvent event) {
-                    if (!(event instanceof WindowEvent)) return;
-                    int id = event.getID();
-                    if (id != WindowEvent.WINDOW_OPENED && id != WindowEvent.WINDOW_ACTIVATED) return;
-                    Window window = ((WindowEvent) event).getWindow();
-                    if (!(window instanceof Frame)) return; // skip JDialog etc.
-                    Frame frame = (Frame) window;
-                    try {
-                        if ((frame.getExtendedState() & Frame.MAXIMIZED_BOTH) != Frame.MAXIMIZED_BOTH) {
-                            Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
-                            frame.setBounds(0, 0, screen.width, screen.height);
-                            frame.setExtendedState(frame.getExtendedState() | Frame.MAXIMIZED_BOTH);
-                        }
-                    } catch (Throwable ignored) {
-                        // Headless / size policies — best-effort.
-                    }
+    private static void startPoller() {
+        Thread t = new Thread(() -> {
+            // Burn the first few seconds with a tighter loop so the first frame opens maxed.
+            long deadline = System.currentTimeMillis() + 30_000L;
+            while (true) {
+                try {
+                    sweep();
+                } catch (Throwable ignored) {
+                    // Don't let the poller die — AWT may still be coming up.
                 }
-            }, AWTEvent.WINDOW_EVENT_MASK);
-        } catch (Throwable t) {
-            // Don't break the JVM if AWT isn't fully initialized at premain time.
-            System.err.println("WindowMaximizerAgent install failed: " + t);
+                try {
+                    Thread.sleep(System.currentTimeMillis() < deadline ? 250L : 1000L);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }, "WindowMaximizerAgent");
+        t.setDaemon(true);
+        t.start();
+        System.out.println("[WindowMaximizerAgent] poller started");
+    }
+
+    private static void sweep() {
+        Frame[] frames = Frame.getFrames();
+        if (frames.length == 0) return;
+        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
+        if (screen == null || screen.width <= 0 || screen.height <= 0) return;
+        for (Frame f : frames) {
+            if (f == null) continue;
+            if (f instanceof Dialog) continue;
+            if (!f.isVisible()) continue;
+            int state = f.getExtendedState();
+            if ((state & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH) continue;
+            try {
+                f.setBounds(0, 0, screen.width, screen.height);
+                f.setExtendedState(state | Frame.MAXIMIZED_BOTH);
+                System.out.println("[WindowMaximizerAgent] maxed " + f.getTitle()
+                        + " -> " + screen.width + "x" + screen.height);
+            } catch (Throwable ignored) {
+                // Headless / size policies — best-effort.
+            }
         }
     }
 }

@@ -134,10 +134,20 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                             | View.SYSTEM_UI_FLAG_FULLSCREEN
                             | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().getAttributes().layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             getWindow().getAttributes().layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         }
+    }
+
+    @Override
+    protected boolean shouldIgnoreNotch() {
+        // BaseActivity.onPostResume reads this — overriding so the canvas extends under
+        // the notch regardless of the global PREF_IGNORE_NOTCH setting.
+        return true;
     }
 
     private void wireMenu() {
