@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.drawerlayout.widget.DrawerLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/rl_drawer"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000"
+    android:fitsSystemWindows="false"
+    android:keepScreenOn="true">
+
+    <FrameLayout
+        android:id="@+id/rl_content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <net.kdt.pojavlaunch.AWTCanvasView
+            android:id="@+id/rl_awt_canvas"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <ImageView
+            android:id="@+id/rl_mouse_pointer"
+            android:layout_width="18dp"
+            android:layout_height="27dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_mouse_pointer"
+            android:visibility="gone" />
+
+        <net.kdt.pojavlaunch.customcontrols.keyboard.TouchCharInput
+            android:id="@+id/rl_keyboard_input"
+            android:layout_width="1dp"
+            android:layout_height="1dp"
+            android:background="@android:color/darker_gray"
+            android:ems="10"
+            android:imeOptions="flagNoFullscreen|flagNoExtractUi|flagNoPersonalizedLearning|actionDone"
+            android:inputType="textFilter|textImeMultiLine|textAutoComplete|textAutoCorrect"
+            tools:ignore="TouchTargetSizeCheck" />
+
+        <Button
+            android:id="@+id/rl_menu_button"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="8dp"
+            android:alpha="0.55"
+            android:background="@drawable/control_button"
+            android:text="☰"
+            android:textSize="22sp" />
+
+        <com.kdt.LoggerView
+            android:id="@+id/rl_logger"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="220dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:background="?attr/colorBackgroundFloating"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <Button
+            android:id="@+id/rl_btn_keyboard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Toggle keyboard" />
+
+        <Button
+            android:id="@+id/rl_btn_mouse_mode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Toggle virtual mouse" />
+
+        <Button
+            android:id="@+id/rl_btn_copy"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Copy (Ctrl+C)" />
+
+        <Button
+            android:id="@+id/rl_btn_paste"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Paste (Ctrl+V)" />
+
+        <Button
+            android:id="@+id/rl_btn_log"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="View log" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginVertical="8dp"
+            android:background="?android:attr/dividerHorizontal" />
+
+        <Button
+            android:id="@+id/rl_btn_force_close"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Force close" />
+
+    </LinearLayout>
+
+</androidx.drawerlayout.widget.DrawerLayout>

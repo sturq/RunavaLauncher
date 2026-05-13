@@ -11,8 +11,18 @@ import java.util.*;
 import net.kdt.pojavlaunch.utils.*;
 
 public class AWTCanvasView extends TextureView implements TextureView.SurfaceTextureListener, Runnable {
-    public static final int AWT_CANVAS_WIDTH = 720;
-    public static final int AWT_CANVAS_HEIGHT = 600;
+    public static int AWT_CANVAS_WIDTH = 720;
+    public static int AWT_CANVAS_HEIGHT = 600;
+
+    /** Set the Cacio managed-screen / bitmap size before this view is constructed.
+     *  Must be called before setContentView (i.e. before the JVM is launched too,
+     *  since cacio.managed.screensize is propagated as a -D JVM arg from these). */
+    public static void setManagedScreenSize(int w, int h) {
+        if (w >= 320 && h >= 240) {
+            AWT_CANVAS_WIDTH = w;
+            AWT_CANVAS_HEIGHT = h;
+        }
+    }
     private static final int MAX_SIZE = 100;
     private static final double NANOS = 1000000000.0;
     private boolean mIsDestroyed = false;

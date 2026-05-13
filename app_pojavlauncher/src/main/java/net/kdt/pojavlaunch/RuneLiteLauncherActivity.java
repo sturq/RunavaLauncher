@@ -255,15 +255,14 @@ public class RuneLiteLauncherActivity extends Activity {
         diag("launching jar: path=" + jar.getAbsolutePath() + " exists=" + jar.exists()
                 + " size=" + jar.length() + " canRead=" + jar.canRead());
         Toast.makeText(this, "Launch: " + jar.length() + " bytes", Toast.LENGTH_LONG).show();
-        Intent intent = new Intent(this, JavaGUILauncherActivity.class);
+        Intent intent = new Intent(this, RuneLiteGameActivity.class);
         // --mode OFF: disable RuneLite's hardware acceleration (Pojav's GL bridge can't
         // service desktop AWT GL).
         // --launch-mode REFLECT: don't fork/exec a child JVM for the client — Android
         // sandboxes block that (errno 13 from ProcessBuilder.start). Run in-process via
         // ReflectionLauncher instead.
-        intent.putExtra("javaArgs",
+        intent.putExtra(RuneLiteGameActivity.EXTRA_JAVA_ARGS,
                 "-jar " + jar.getAbsolutePath() + " --mode OFF --launch-mode REFLECT");
-        intent.putExtra("openLogOutput", true);
         startActivity(intent);
         finish();
     }
