@@ -74,14 +74,34 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
     }
 
+    /** Target frame interval. ~16.67 ms = 60 Hz. The Cacio render → setPixels → drawBitmap
+     *  pipeline is all CPU; running it at 300 FPS like the uncapped loop did wastes ~5x the
+     *  pixel work since the screen only refreshes at 60 Hz anyway. Capping frees that CPU
+     *  budget for the AWT scene paint itself, which is what makes RuneLite feel laggy. */
+    private static final long FRAME_INTERVAL_NS = 16_666_667L;
+
     @Override
     public void run() {
         Canvas canvas;
         Surface surface = new Surface(getSurfaceTexture());
         Bitmap rgbArrayBitmap = Bitmap.createBitmap(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT, Bitmap.Config.ARGB_8888);
         Paint paint = new Paint();
+        long nextFrameNs = System.nanoTime();
         try {
             while (!mIsDestroyed && surface.isValid()) {
+                long now = System.nanoTime();
+                long sleepNs = nextFrameNs - now;
+                if (sleepNs > 0) {
+                    try { Thread.sleep(sleepNs / 1_000_000L, (int)(sleepNs % 1_000_000L)); }
+                    catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+                    nextFrameNs += FRAME_INTERVAL_NS;
+                } else if (sleepNs < -FRAME_INTERVAL_NS) {
+                    // We're more than a frame behind — resync rather than try to catch up.
+                    nextFrameNs = now + FRAME_INTERVAL_NS;
+                } else {
+                    nextFrameNs += FRAME_INTERVAL_NS;
+                }
+
                 canvas = surface.lockCanvas(null);
                 canvas.drawRGB(0, 0, 0);
                 int[] rgbArray = JREUtils.renderAWTScreenFrame(/* canvas, mWidth, mHeight */);
