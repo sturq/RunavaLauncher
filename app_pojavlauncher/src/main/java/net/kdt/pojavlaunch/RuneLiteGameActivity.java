@@ -127,19 +127,28 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         mGlSurface.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(SurfaceHolder holder) {
+                Surface s = holder.getSurface();
+                System.out.println("[RuneLiteGameActivity] GL surface created: valid=" + (s != null && s.isValid()));
                 try {
-                    Log.i("RuneLiteGame", "GL surface created — installing GLFW bridge");
-                    JREUtils.setupBridgeWindow(holder.getSurface());
+                    JREUtils.setupBridgeWindow(s);
+                    System.out.println("[RuneLiteGameActivity] setupBridgeWindow OK");
                 } catch (Throwable t) {
                     Log.e("RuneLiteGame", "setupBridgeWindow failed", t);
+                    System.out.println("[RuneLiteGameActivity] setupBridgeWindow FAILED: " + t);
                 }
                 synchronized (mGlSurfaceReadyLock) {
                     mGlSurfaceReady = true;
                     mGlSurfaceReadyLock.notifyAll();
                 }
             }
-            @Override public void surfaceChanged(SurfaceHolder h, int f, int w, int hh) {}
-            @Override public void surfaceDestroyed(SurfaceHolder h) {}
+            @Override
+            public void surfaceChanged(SurfaceHolder h, int f, int w, int hh) {
+                System.out.println("[RuneLiteGameActivity] GL surface changed: " + w + "x" + hh + " format=" + f);
+            }
+            @Override
+            public void surfaceDestroyed(SurfaceHolder h) {
+                System.out.println("[RuneLiteGameActivity] GL surface destroyed");
+            }
         });
 
         MainActivity.GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
@@ -549,7 +558,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                     Log.w("RuneLiteGame", "window-maximizer agent could not be extracted");
                 }
                 javaArgList.addAll(argList);
-                Log.i("RuneLiteGame", "JVM args: " + javaArgList);
+                System.out.println("[RuneLiteGameActivity] launching JVM with args: " + javaArgList);
                 JREUtils.launchJavaVM(this, runtime, null, javaArgList, LauncherPreferences.PREF_CUSTOM_JAVA_ARGS);
             } catch (Throwable t) {
                 Log.e("RuneLiteGame", "JVM launch failed", t);

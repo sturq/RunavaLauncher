@@ -268,29 +268,38 @@ public class RuneLiteLauncherActivity extends Activity {
         finish();
     }
 
-    /** Copy any existing RuneLite launcher.log into public Downloads so we can read it from outside the app. */
+    /** Copy every log we can find from the previous run into public Downloads so we can
+     *  read them from outside the app: RuneLite's own launcher.log AND Pojav's latestlog.txt
+     *  (which has the JVM stdout/stderr — where GPU/GLFW init success or failure shows up). */
     private void copyRuneLiteLogToDownloads() {
-        try {
-            File ext = getExternalFilesDir(null);
-            if (ext == null) return;
-            File rlLog = new File(ext, ".runelite/logs/launcher.log");
-            if (!rlLog.exists()) {
-                diag("no prior runelite launcher.log at " + rlLog.getAbsolutePath());
-                return;
+        File ext = getExternalFilesDir(null);
+        if (ext == null) return;
+        File extPub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        if (extPub == null) return;
+        extPub.mkdirs();
+        // Pair: source -> dest filename in Downloads
+        String[][] pairs = {
+                {".runelite/logs/launcher.log", "runelite-launcher.log"},
+                {"latestlog.txt", "runelitedroid-jvm.log"},
+        };
+        for (String[] pair : pairs) {
+            try {
+                File src = new File(ext, pair[0]);
+                if (!src.exists() || src.length() == 0) {
+                    diag("log skip: " + pair[0] + " (missing or empty)");
+                    continue;
+                }
+                File dst = new File(extPub, pair[1]);
+                try (java.io.FileInputStream in = new java.io.FileInputStream(src);
+                     FileOutputStream out = new FileOutputStream(dst)) {
+                    byte[] buf = new byte[16384];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
+                diag("copied " + pair[0] + " -> Downloads/" + pair[1] + " (" + dst.length() + " bytes)");
+            } catch (Throwable t) {
+                diag("copy of " + pair[0] + " failed: " + t);
             }
-            File extPub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-            if (extPub == null) return;
-            extPub.mkdirs();
-            File dst = new File(extPub, "runelite-launcher.log");
-            try (java.io.FileInputStream in = new java.io.FileInputStream(rlLog);
-                 FileOutputStream out = new FileOutputStream(dst)) {
-                byte[] buf = new byte[16384];
-                int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            }
-            diag("copied runelite log to Downloads (" + dst.length() + " bytes)");
-        } catch (Throwable t) {
-            diag("copyRuneLiteLogToDownloads failed: " + t);
         }
     }
 
