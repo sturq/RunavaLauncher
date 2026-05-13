@@ -57,6 +57,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private boolean mVirtualMouseEnabled;
     private float mLastTouchX, mLastTouchY;
 
+    // Single-finger drag state: distinguish tap (down+up close together) from
+    // drag (down + significant movement + up). Drag holds the left button while
+    // moving, so OSRS can do drag-and-drop on inventory items, minimap drags, etc.
+    private boolean mLongPressFired;
+    private boolean mLeftButtonHeld;
+    private float mDownX, mDownY;
+    private static final float DRAG_START_PX = 14f;
+
     // Two-finger gesture state for camera rotate (arrow keys) + zoom (scroll wheel).
     private boolean mTwoFingerActive;
     private float mLastMidX, mLastMidY;
@@ -213,59 +221,109 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     }
 
     /**
-     * Touch mapping:
-     *  - 1 finger tap = left click (via GestureListener.onSingleTapUp)
-     *  - 1 finger long-press = right click
-     *  - 1 finger drag = mouse hover/drag (position tracking)
-     *  - 2 fingers pan = middle-mouse drag (camera rotate in OSRS)
-     *  - 2 fingers pinch = mouse-wheel scroll (camera zoom)
-     *
-     *  Virtual mouse mode replaces direct touch with relative-movement pointer.
+     * Touch mapping (mirrors OSRS Mobile feel):
+     *  - 1 finger tap (quick down+up, no movement) = left click
+     *  - 1 finger hold (>500ms, no movement)       = right click (context menu)
+     *  - 1 finger drag (movement > threshold)      = left button HELD during the drag
+     *      (inventory drag-and-drop, minimap drag, etc.)
+     *  - 2 fingers pan                             = arrow keys (camera rotate / tilt)
+     *  - 2 fingers pinch                           = mouse-wheel scroll (zoom)
      */
     @Override
     public boolean onTouch(View v, MotionEvent event) {
         int action = event.getActionMasked();
         int pointers = event.getPointerCount();
 
-        // 2-finger camera/zoom takes precedence — only consume gestures with one finger down.
+        // End of a multi-finger gesture — when one of several pointers lifts.
+        if (action == MotionEvent.ACTION_POINTER_UP && mTwoFingerActive) {
+            releaseAllArrows();
+            mTwoFingerActive = false;
+            return true;
+        }
+
+        // 2-finger gesture: camera + zoom. If we had a single-finger drag going, release it first.
         if (pointers >= 2) {
+            if (mLeftButtonHeld) {
+                AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK, false);
+                mLeftButtonHeld = false;
+            }
             handleTwoFinger(event, action);
             return true;
         }
-        // Releasing the second finger ends the camera drag cleanly — let go of any held arrows.
-        if (mTwoFingerActive && (action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP
-                || action == MotionEvent.ACTION_CANCEL)) {
+
+        // 2-finger gesture just ended — full-lift cleanup if it didn't already happen.
+        if (mTwoFingerActive && (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)) {
             releaseAllArrows();
             mTwoFingerActive = false;
+            return true;
         }
-        if (mTwoFingerActive) return true; // ignore stray single-finger events during the gesture
 
+        // GestureDetector handles long-press timing for us; we feed it events and read mLongPressFired.
         mGestures.onTouchEvent(event);
         float x = event.getX(), y = event.getY();
 
         if (mVirtualMouseEnabled) {
-            switch (action) {
-                case MotionEvent.ACTION_DOWN:
-                    mLastTouchX = x;
-                    mLastTouchY = y;
-                    break;
-                case MotionEvent.ACTION_MOVE:
-                    float nx = Math.max(0, Math.min((float)(mCanvas.getWidth() - mPointer.getWidth()),
-                            mPointer.getX() + (x - mLastTouchX)));
-                    float ny = Math.max(0, Math.min((float)(mCanvas.getHeight() - mPointer.getHeight()),
-                            mPointer.getY() + (y - mLastTouchY)));
-                    mPointer.setX(nx);
-                    mPointer.setY(ny);
-                    mLastTouchX = x;
-                    mLastTouchY = y;
-                    sendScaledMousePosition(nx + mPointer.getWidth() / 2f, ny + mPointer.getHeight() / 2f);
-                    break;
-            }
-        } else {
-            // Direct touch: send mouse position on every touch event so AWT tracks the finger.
-            sendScaledMousePosition(x, y);
+            handleVirtualMouse(event, action, x, y);
+            return true;
+        }
+
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+                mLongPressFired = false;
+                mLeftButtonHeld = false;
+                mDownX = x;
+                mDownY = y;
+                sendScaledMousePosition(x, y);
+                break;
+            case MotionEvent.ACTION_MOVE:
+                sendScaledMousePosition(x, y);
+                if (!mLongPressFired && !mLeftButtonHeld) {
+                    float dist = (float) Math.hypot(x - mDownX, y - mDownY);
+                    if (dist > DRAG_START_PX) {
+                        // Crossed the drag threshold — start a real left-button-held drag from
+                        // the initial touch point (so the press is registered where the user
+                        // first touched, not where they've drifted to).
+                        AWTInputBridge.sendMousePos(
+                                (int) MathUtils.map(mDownX, 0, mCanvas.getWidth(), 0, AWTCanvasView.AWT_CANVAS_WIDTH),
+                                (int) MathUtils.map(mDownY, 0, mCanvas.getHeight(), 0, AWTCanvasView.AWT_CANVAS_HEIGHT));
+                        AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK, true);
+                        mLeftButtonHeld = true;
+                        sendScaledMousePosition(x, y);
+                    }
+                }
+                break;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (mLeftButtonHeld) {
+                    AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK, false);
+                    mLeftButtonHeld = false;
+                } else if (!mLongPressFired) {
+                    // Plain tap — short press, no movement, no long-press fire → single left click.
+                    AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
+                }
+                break;
         }
         return true;
+    }
+
+    private void handleVirtualMouse(MotionEvent event, int action, float x, float y) {
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+                mLastTouchX = x;
+                mLastTouchY = y;
+                break;
+            case MotionEvent.ACTION_MOVE:
+                float nx = Math.max(0, Math.min((float)(mCanvas.getWidth() - mPointer.getWidth()),
+                        mPointer.getX() + (x - mLastTouchX)));
+                float ny = Math.max(0, Math.min((float)(mCanvas.getHeight() - mPointer.getHeight()),
+                        mPointer.getY() + (y - mLastTouchY)));
+                mPointer.setX(nx);
+                mPointer.setY(ny);
+                mLastTouchX = x;
+                mLastTouchY = y;
+                sendScaledMousePosition(nx + mPointer.getWidth() / 2f, ny + mPointer.getHeight() / 2f);
+                break;
+        }
     }
 
     private void handleTwoFinger(MotionEvent event, int action) {
@@ -332,23 +390,13 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 (int) MathUtils.map(y, 0, h, 0, AWTCanvasView.AWT_CANVAS_HEIGHT));
     }
 
+    /** Only used for long-press detection — taps and double-clicks are emitted from
+     *  ACTION_UP in onTouch so they're consistent with drag start/end ordering. */
     private class GestureListener extends GestureDetector.SimpleOnGestureListener {
         @Override
-        public boolean onSingleTapUp(MotionEvent e) {
-            AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
-            return true;
-        }
-
-        @Override
         public void onLongPress(MotionEvent e) {
+            mLongPressFired = true;
             AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_DOWN_MASK);
-        }
-
-        @Override
-        public boolean onDoubleTap(MotionEvent e) {
-            AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
-            AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
-            return true;
         }
     }
 
