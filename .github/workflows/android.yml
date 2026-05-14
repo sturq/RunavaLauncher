@@ -35,26 +35,21 @@ jobs:
 
       # JRE 8 deliberately omitted — RuneLite needs Java 11+ (compiled with major 55).
       # The JRE 8 binpack from Pojav is ~13 MB of dead weight for our APK.
+      #
+      # Using JRE 21 instead of 17: AngelAuraMC's OpenJDK 17 build for Android has
+      # a deterministic libjvm.so+0xa14ca0 SIGSEGV in Cacio's AWT peer path that
+      # we couldn't work around at the agent or activity level — see the comment
+      # in RuneLiteLauncherActivity for the disassembly notes.
 
-      - name: Get JRE17
+      - name: Get JRE21
         uses: dawidd6/action-download-artifact@v9
         with:
           workflow: build.yml
-          path: app_pojavlauncher/src/main/assets/components/jre-new
+          path: app_pojavlauncher/src/main/assets/components/jre-21
           workflow_conclusion: completed
           repo: AngelAuraMC/angelauramc-openjdk-build
           branch: buildjre17-21
-          name: jre17-pojav
-      #
-      # - name: Get JRE21
-      #   uses: dawidd6/action-download-artifact@v9
-      #   with:
-      #     workflow: build.yml
-      #     path: app_pojavlauncher/src/main/assets/components/jre-21
-      #     workflow_conclusion: completed
-      #     repo: AngelAuraMC/angelauramc-openjdk-build
-      #     branch: buildjre17-21
-      #     name: jre21-pojav
+          name: jre21-pojav
       #
       # - name: Get JRE25
       #   uses: dawidd6/action-download-artifact@v9

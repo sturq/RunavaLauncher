@@ -39,14 +39,24 @@ public class RuneLiteLauncherActivity extends Activity {
     private static final String RUNELITE_URL = "https://github.com/runelite/launcher/releases/latest/download/RuneLite.jar";
     private static final String JAR_NAME = "RuneLite.jar";
     private static final String DIAG_FILENAME = "runelitedroid-diag.txt";
-    private static final String JRE17_NAME = "Internal-17";
+    // JRE 21 chosen over 17: the AngelAuraMC OpenJDK 17 build for Android has a
+    // deterministic libjvm.so+0xa14ca0 SIGSEGV that fires in Cacio's AWT peer path
+    // shortly after RuneLite's JFrame becomes visible (5+ identical-PC captures,
+    // different triggers). Disassembly puts the fault inside a thread-local JNI
+    // routine reading a freed JavaThread struct — a JVM-internal bug. Switching
+    // OpenJDK builds is the only remaining lever; JRE 21 is officially supported
+    // by RuneLite (their own desktop installers ship 17/21 builds).
+    private static final String JRE_NAME = "Internal-21";
+    /** Asset path the CI build drops the JRE bundle into. Must match the install
+     *  path the InternalRuntime enum points at in NewJREUtil. */
+    private static final String JRE_ASSET_DIR = "components/jre-21";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         applyLauncherPrefs();
         copyRuneLiteLogToDownloads();
-        ensureJre17Async(() -> {
+        ensureJreAsync(() -> {
             File jar = new File(getFilesDir(), JAR_NAME);
             if (jar.exists() && jar.length() > 0 && isValidJar(jar)) {
                 diag("cached jar OK, size=" + jar.length() + " path=" + jar.getAbsolutePath());
@@ -61,18 +71,18 @@ public class RuneLiteLauncherActivity extends Activity {
         });
     }
 
-    private void ensureJre17Async(Runnable onReady) {
+    private void ensureJreAsync(Runnable onReady) {
         try {
-            String installed = MultiRTUtils.readInternalRuntimeVersion(JRE17_NAME);
-            String packaged = Tools.read(getAssets().open("components/jre-new/version"));
+            String installed = MultiRTUtils.readInternalRuntimeVersion(JRE_NAME);
+            String packaged = Tools.read(getAssets().open(JRE_ASSET_DIR + "/version"));
             if (packaged.equals(installed)) {
-                diag("JRE 17 already installed v=" + installed);
+                diag("JRE 21already installed v=" + installed);
                 onReady.run();
                 return;
             }
-            diag("JRE 17 needs install: packaged=" + packaged + " installed=" + installed);
+            diag("JRE 21needs install: packaged=" + packaged + " installed=" + installed);
         } catch (Throwable t) {
-            diag("JRE 17 version check failed: " + t);
+            diag("JRE 21version check failed: " + t);
         }
 
         final ProgressDialog dlg = new ProgressDialog(this);
@@ -83,20 +93,20 @@ public class RuneLiteLauncherActivity extends Activity {
             String error = null;
             try {
                 AssetManager am = getAssets();
-                String packaged = Tools.read(am.open("components/jre-new/version"));
+                String packaged = Tools.read(am.open(JRE_ASSET_DIR + "/version"));
                 String arch = Architecture.archAsString(Tools.DEVICE_ARCHITECTURE);
                 MultiRTUtils.installRuntimeNamedBinpack(
-                        am.open("components/jre-new/universal.tar.xz"),
-                        am.open("components/jre-new/bin-" + arch + ".tar.xz"),
-                        JRE17_NAME, packaged);
-                MultiRTUtils.postPrepare(JRE17_NAME);
-                diag("JRE 17 unpacked OK, arch=" + arch + " v=" + packaged);
+                        am.open(JRE_ASSET_DIR + "/universal.tar.xz"),
+                        am.open(JRE_ASSET_DIR + "/bin-" + arch + ".tar.xz"),
+                        JRE_NAME, packaged);
+                MultiRTUtils.postPrepare(JRE_NAME);
+                diag("JRE 21unpacked OK, arch=" + arch + " v=" + packaged);
             } catch (Throwable t) {
-                Log.e(TAG, "JRE 17 install failed", t);
+                Log.e(TAG, "JRE 21install failed", t);
                 StringWriter sw = new StringWriter();
                 t.printStackTrace(new PrintWriter(sw));
                 error = t + "\n" + sw;
-                diag("JRE 17 install FAILED: " + error);
+                diag("JRE 21install FAILED: " + error);
             }
             final String finalError = error;
             runOnUiThread(() -> {
@@ -117,8 +127,8 @@ public class RuneLiteLauncherActivity extends Activity {
     private void applyLauncherPrefs() {
         SharedPreferences p = PreferenceManager.getDefaultSharedPreferences(this);
         boolean changed = false;
-        if (!JRE17_NAME.equals(p.getString("defaultRuntime", ""))) {
-            p.edit().putString("defaultRuntime", JRE17_NAME).commit();
+        if (!JRE_NAME.equals(p.getString("defaultRuntime", ""))) {
+            p.edit().putString("defaultRuntime", JRE_NAME).commit();
             changed = true;
         }
         if (!p.getBoolean("disable_autojre_select", false)) {
