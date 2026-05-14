@@ -53,18 +53,10 @@ public class WindowMaximizerAgent {
         System.out.println("[WindowMaximizerAgent] poller started");
     }
 
-    private static void sweepOnEdt() {
-        try {
-            javax.swing.SwingUtilities.invokeLater(() -> {
-                try { sweep(); } catch (Throwable ignored) {}
-            });
-        } catch (Throwable ignored) {}
-    }
-
-    /** Hand sweep() off to the EDT. All Frame.setSize / setExtendedState mutations have
-     *  to run on the AWT event-dispatch thread, otherwise they race with paint/layout
-     *  in Cacio's component-peer pipeline and reproducibly crash libjvm.so+0xa14ca0.
-     *  invokeLater is non-blocking; if the EDT is busy we just skip this tick. */
+    /** Hand sweep() off to the EDT. All Frame mutations have to run on the AWT
+     *  event-dispatch thread; otherwise they race with paint/layout in Cacio's
+     *  component-peer pipeline. invokeLater is non-blocking — if the EDT is busy
+     *  we just skip this tick. */
     private static void sweepOnEdt() {
         try {
             javax.swing.SwingUtilities.invokeLater(() -> {
