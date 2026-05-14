@@ -233,6 +233,15 @@ public class WindowMaximizerAgent {
         });
     }
 
+    /** Frames we've already maximized at least once. RuneLite's ContainableFrame
+     *  resizes its JFrame on its own (sidebar open/close especially) — if we
+     *  re-maximize on every sweep we get a tug-of-war: agent resizes to 1278x568,
+     *  RuneLite shrinks to 1036x568, agent re-resizes, etc. Five rapid resizes in
+     *  the log right before the JRE 21 SIGSEGV at libjvm.so+0xac44cc. WeakHashMap
+     *  so Frames that get disposed don't leak. */
+    private static final java.util.Set<Frame> sMaximized =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
     private static void sweep() {
         Frame[] frames = Frame.getFrames();
         if (frames.length == 0) return;
@@ -243,6 +252,7 @@ public class WindowMaximizerAgent {
             // Frame.getFrames() returns only Frames (Dialog extends Window directly,
             // not Frame), so popups (FatalErrorDialog etc.) are never in this array.
             if (!f.isVisible()) continue;
+            if (sMaximized.contains(f)) continue;
             try {
                 int curW = f.getWidth();
                 int curH = f.getHeight();
@@ -258,6 +268,7 @@ public class WindowMaximizerAgent {
                             + " -> " + screen.width + "x" + screen.height + " @ 0,0"
                             + " (state=" + Integer.toHexString(f.getExtendedState()) + ")");
                 }
+                sMaximized.add(f);
             } catch (Throwable t) {
                 System.out.println("[WindowMaximizerAgent] resize failed: " + t);
             }
