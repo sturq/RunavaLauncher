@@ -52,13 +52,7 @@ public class WindowMaximizerAgent {
         }, "WindowMaximizerAgent");
         t.setDaemon(true);
         t.start();
-        // DISABLED: posting MouseWheelEvent/MouseEvent from a daemon thread into
-        // AWT's event queue was correlating with a SIGSEGV in libjvm.so on the
-        // user's device. Until we can run the injection on EDT cleanly without
-        // crashing the JVM, leave the input-bridge file watcher off — falls back
-        // to whatever path Caciocavallo's AWT bridge handles (which for scroll
-        // is none, but at least the JVM stays up).
-        // startInputBridge();
+        startInputBridge();
         System.out.println("[WindowMaximizerAgent] poller started");
     }
 
@@ -124,32 +118,38 @@ public class WindowMaximizerAgent {
         return null;
     }
 
-    private static void postWheel(int ticks) {
-        Window w = pickTargetWindow();
-        if (w == null) return;
-        int x = w.getWidth() / 2, y = w.getHeight() / 2;
-        long when = System.currentTimeMillis();
-        MouseWheelEvent e = new MouseWheelEvent(
-                w, MouseEvent.MOUSE_WHEEL, when, 0,
-                x, y, 0, false,
-                MouseWheelEvent.WHEEL_UNIT_SCROLL,
-                Math.abs(ticks), ticks);
-        Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(e);
-        System.out.println("[WindowMaximizerAgent] posted WHEEL " + ticks + " to " + w);
+    private static void postWheel(final int ticks) {
+        // Defer to EDT — concurrent AWT mutation from the daemon thread that polls
+        // the file was triggering a SIGSEGV in libjvm.so on the user's device.
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            Window w = pickTargetWindow();
+            if (w == null) return;
+            int x = w.getWidth() / 2, y = w.getHeight() / 2;
+            long when = System.currentTimeMillis();
+            MouseWheelEvent e = new MouseWheelEvent(
+                    w, MouseEvent.MOUSE_WHEEL, when, 0,
+                    x, y, 0, false,
+                    MouseWheelEvent.WHEEL_UNIT_SCROLL,
+                    Math.abs(ticks), ticks);
+            Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(e);
+            System.out.println("[WindowMaximizerAgent] posted WHEEL " + ticks);
+        });
     }
 
     private static void postRightClick() {
-        Window w = pickTargetWindow();
-        if (w == null) return;
-        int x = w.getWidth() / 2, y = w.getHeight() / 2;
-        long when = System.currentTimeMillis();
-        MouseEvent down = new MouseEvent(w, MouseEvent.MOUSE_PRESSED, when, 0,
-                x, y, 1, true, MouseEvent.BUTTON3);
-        MouseEvent up = new MouseEvent(w, MouseEvent.MOUSE_RELEASED, when + 1, 0,
-                x, y, 1, false, MouseEvent.BUTTON3);
-        Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(down);
-        Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(up);
-        System.out.println("[WindowMaximizerAgent] posted RIGHTCLICK to " + w);
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            Window w = pickTargetWindow();
+            if (w == null) return;
+            int x = w.getWidth() / 2, y = w.getHeight() / 2;
+            long when = System.currentTimeMillis();
+            MouseEvent down = new MouseEvent(w, MouseEvent.MOUSE_PRESSED, when, 0,
+                    x, y, 1, true, MouseEvent.BUTTON3);
+            MouseEvent up = new MouseEvent(w, MouseEvent.MOUSE_RELEASED, when + 1, 0,
+                    x, y, 1, false, MouseEvent.BUTTON3);
+            Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(down);
+            Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(up);
+            System.out.println("[WindowMaximizerAgent] posted RIGHTCLICK");
+        });
     }
 
     private static void sweep() {

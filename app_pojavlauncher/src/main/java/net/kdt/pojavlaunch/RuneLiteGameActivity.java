@@ -410,12 +410,18 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         fireRightClick();
     };
 
-    /** Safest single-shot right-click. Earlier multi-encoding + threaded variant
-     *  crashed the JVM — most likely Cacio doesn't like rapid sustained mouse
-     *  events fed from a non-EDT thread. One AWT-bridge call, no threading.
-     *  This is what worked via GestureDetector.onLongPress in early builds. */
+    /** Right-click. After decompiling cacio-tta.jar's CTCRobotPeer:
+     *    mousePress(input) calls buttonDownToButtonMask(input), which is
+     *    bit-shifted incorrectly: for BUTTON3_DOWN_MASK (4096) it produces
+     *    modifier bit 64 instead of BUTTON3_MASK (4). RuneLite's right-click
+     *    check sees a garbage modifier and doesn't recognize the event.
+     *  Fix: pass the OLD-style BUTTON3_MASK (= 4 = META_MASK) as input. Cacio
+     *  preserves it correctly because the decoder does (input & 28) first
+     *  which catches the low bits cleanly. As a bonus, BUTTON3_MASK input
+     *  causes Cacio's mouseRelease to set popupTrigger=true (the (input & 4)
+     *  check), which is what triggers context menus on Linux/AWT. */
     private void fireRightClick() {
-        AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_DOWN_MASK);
+        AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_MASK);
         Toast.makeText(this, "right-click", Toast.LENGTH_SHORT).show();
     }
 
