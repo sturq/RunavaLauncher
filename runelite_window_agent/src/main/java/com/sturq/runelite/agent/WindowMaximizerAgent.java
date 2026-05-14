@@ -36,19 +36,29 @@ public class WindowMaximizerAgent {
     }
 
     private static void startPoller() {
-        // NOTE: window-maximize disabled. Five reproducible SIGSEGVs at the same
-        // pc=libjvm.so+0xa14ca0, every one immediately after we called
-        // setExtendedState(MAXIMIZED_BOTH) on the RuneLite JFrame via Cacio's
-        // CacioWindowPeer. Switching GC, dropping C2 JIT, and serializing the
-        // mutations onto the EDT all left the PC offset unchanged — the fault
-        // sits inside one of the Cacio/AWT native peer code paths that
-        // setExtendedState reaches. Leaving the JFrame at its natural 767x528
-        // means a Cacio "desktop" border around the client, but the alternative
-        // is the JVM dying ~2s after init.
-        //
-        // We still ship the input bridge below — that part works.
+        Thread t = new Thread(() -> {
+            // Stop after 30s: every JFrame we'll ever see has appeared, and continuing
+            // to fight RuneLite's ContainableFrame past that point produces a tug-of-war
+            // that piles up AWT events.
+            long deadline = System.currentTimeMillis() + 30_000L;
+            while (System.currentTimeMillis() < deadline) {
+                try { sweepOnEdt(); } catch (Throwable ignored) {}
+                try { Thread.sleep(500L); }
+                catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
+            }
+        }, "WindowMaximizerAgent");
+        t.setDaemon(true);
+        t.start();
         startInputBridge();
-        System.out.println("[WindowMaximizerAgent] input bridge started (window-maximize disabled)");
+        System.out.println("[WindowMaximizerAgent] poller started");
+    }
+
+    private static void sweepOnEdt() {
+        try {
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                try { sweep(); } catch (Throwable ignored) {}
+            });
+        } catch (Throwable ignored) {}
     }
 
     /** Hand sweep() off to the EDT. All Frame.setSize / setExtendedState mutations have
@@ -238,8 +248,6 @@ public class WindowMaximizerAgent {
         if (screen == null || screen.width <= 0 || screen.height <= 0) return;
         for (Frame f : frames) {
             if (f == null) continue;
-            // Frame.getFrames() returns only Frames (Dialog extends Window directly,
-            // not Frame), so popups (FatalErrorDialog etc.) are never in this array.
             if (!f.isVisible()) continue;
             if (sMaximized.contains(f)) continue;
             try {
@@ -247,21 +255,26 @@ public class WindowMaximizerAgent {
                 int curH = f.getHeight();
                 int curX = f.getX();
                 int curY = f.getY();
-                // Always call setBounds — don't trust setExtendedState because some
-                // Caciocavallo peers report MAXIMIZED_BOTH but don't actually resize.
+                // Clamp into Cacio's managed-screen bounds. RuneLite opens at
+                // 767x528 @ 511,41 with a 1278x568 Cacio screen, so the bottom-right
+                // corner sits at (1278, 569) — one pixel below the screen height.
+                // Cacio's native peer-paint buffer is sized exactly to the screen,
+                // and any pixel outside it is an OOB write that segfaults libjvm
+                // at +0xa14ca0 (five identical captures, varying triggers).
+                //
+                // setBounds is one call so it doesn't cross the EDT boundary mid-
+                // mutation. We deliberately don't call setExtendedState (that path
+                // is what tripped the early MAXIMIZED_BOTH crashes) or validate
+                // (let AWT re-layout naturally on the size change).
                 if (curW != screen.width || curH != screen.height || curX != 0 || curY != 0) {
-                    f.setLocation(0, 0);
-                    f.setSize(screen.width, screen.height);
-                    f.setExtendedState(f.getExtendedState() | Frame.MAXIMIZED_BOTH);
-                    f.validate();
-                    System.out.println("[WindowMaximizerAgent] resize '" + f.getTitle()
+                    f.setBounds(0, 0, screen.width, screen.height);
+                    System.out.println("[WindowMaximizerAgent] setBounds '" + f.getTitle()
                             + "' " + curW + "x" + curH + " @ " + curX + "," + curY
-                            + " -> " + screen.width + "x" + screen.height + " @ 0,0"
-                            + " (state=" + Integer.toHexString(f.getExtendedState()) + ")");
+                            + " -> " + screen.width + "x" + screen.height + " @ 0,0");
                 }
                 sMaximized.add(f);
             } catch (Throwable t) {
-                System.out.println("[WindowMaximizerAgent] resize failed: " + t);
+                System.out.println("[WindowMaximizerAgent] setBounds failed: " + t);
             }
         }
     }
