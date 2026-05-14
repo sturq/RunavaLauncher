@@ -103,6 +103,8 @@
             android:name=".RuneLiteGameActivity"
             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
             android:screenOrientation="sensorLandscape"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:theme="@style/AppTheme"
             android:exported="false" />
         <activity

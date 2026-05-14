@@ -441,15 +441,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     @Override
     protected void onPause() {
         super.onPause();
-        // Hands off on backgrounding. Every signal we've ever sent to the JVM
-        // on pause (ICONIFY, EDT freezer, Thread.suspend) has TRIGGERED the
-        // very libjvm SIGSEGV we were trying to prevent — Cacio's AWT peer
-        // path hits a use-after-free in JavaThread when we touch frame state
-        // during the activity transition. So: do nothing. The agent's pause
-        // sentinel still goes up so we don't post wheel/click events while
-        // backgrounded, but RuneLite's own repaint timer is left alone. If
-        // the JVM survives Android's natural surface teardown without our
-        // interference, we win.
         setAgentPaused(true);
     }
 
@@ -457,6 +448,34 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     protected void onResume() {
         super.onResume();
         setAgentPaused(false);
+    }
+
+    /**
+     * Fires when the user is leaving the activity intentionally (Home button,
+     * recents). Switch to Picture-in-Picture so the activity stays foreground-
+     * adjacent instead of going into Android 13+'s cached-app freezer — which
+     * has been SIGSTOPping our :runelitegame process at bad AWT moments and
+     * crashing libjvm. PiP keeps the activity in a small floating window; on
+     * tap it returns to full size, no surface destroy/recreate, JVM stays
+     * alive throughout.
+     */
+    @Override
+    public void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            try {
+                android.app.PictureInPictureParams.Builder b =
+                        new android.app.PictureInPictureParams.Builder();
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    b.setAutoEnterEnabled(true);
+                }
+                // 16:9-ish ratio to match Cacio's wide layout reasonably.
+                b.setAspectRatio(new android.util.Rational(16, 9));
+                enterPictureInPictureMode(b.build());
+            } catch (Throwable t) {
+                Log.w("RuneLiteGame", "enterPictureInPictureMode failed", t);
+            }
+        }
     }
 
     /** Append one IPC line for the JVM-side input bridge agent to consume.
