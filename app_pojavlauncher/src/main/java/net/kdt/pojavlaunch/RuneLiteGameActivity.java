@@ -363,6 +363,11 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                         mUiHandler.removeCallbacks(mLongPressFire);
                     }
                     if (dist > DRAG_START_PX) {
+                        // Entering drag/camera mode — kill the long-press timer NOW.
+                        // Otherwise a slow drag (8-60px over 200ms+) would have the
+                        // timer fire mid-drag and pop a right-click context menu
+                        // over the rotation, breaking camera.
+                        mUiHandler.removeCallbacks(mLongPressFire);
                         if (mUiZoneTouch) {
                             AWTInputBridge.sendMousePos(
                                     (int) MathUtils.map(mDownX, 0, mCanvas.getWidth(), 0, AWTCanvasView.AWT_CANVAS_WIDTH),
@@ -509,6 +514,9 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             // queue. Negate ticks because AWT wheel convention is +y = scroll down.
             writeInputRequest("WHEEL " + (-ticks));
             mLastPinchDistance += ticks * PINCH_PIXELS_PER_TICK;
+            final int finalTicks = ticks;
+            runOnUiThread(() -> Toast.makeText(this,
+                    "zoom " + (finalTicks > 0 ? "+" : "") + finalTicks, Toast.LENGTH_SHORT).show());
         }
 
         mLastMidX = midX;
