@@ -154,7 +154,21 @@ public class WindowMaximizerAgent {
         return container;
     }
 
+    /** Last-seen wheel event timestamp. Hard rate-limit: ignore wheel ticks that
+     *  arrive within MIN_WHEEL_GAP_MS of the last one. Spamming AWT with many
+     *  back-to-back wheel events in a tight burst was reproducibly crashing
+     *  libjvm.so+0xa14ca0 — same pc, two captures in a row. Slowing them down
+     *  keeps Cacio's component-peer paint path off the EDT-dispatch hot loop. */
+    private static volatile long sLastWheelMs = 0L;
+    private static final long MIN_WHEEL_GAP_MS = 60L;
+
     private static void postWheel(final int ticks) {
+        long now = System.currentTimeMillis();
+        if (now - sLastWheelMs < MIN_WHEEL_GAP_MS) {
+            // Drop. The Android side spams a tick per pinch frame; ~16 ticks/sec is plenty.
+            return;
+        }
+        sLastWheelMs = now;
         // Defer to EDT — concurrent AWT mutation from the daemon thread that polls
         // the file was triggering a SIGSEGV in libjvm.so previously.
         javax.swing.SwingUtilities.invokeLater(() -> {
@@ -168,11 +182,18 @@ public class WindowMaximizerAgent {
                     x, y, 0, false,
                     MouseWheelEvent.WHEEL_UNIT_SCROLL,
                     Math.abs(ticks), ticks);
-            // dispatchEvent fires listeners directly on this Component, bypassing
-            // both Cacio's input plumbing and the system event queue. Most
-            // reliable way to land a wheel event on the OSRS canvas.
-            target.dispatchEvent(e);
-            System.out.println("[WindowMaximizerAgent] dispatched WHEEL " + ticks
+            // Post via the system event queue rather than calling Component.dispatchEvent
+            // directly. Direct dispatch fires listeners synchronously and bypasses the
+            // EDT's serialization with Cacio's component-peer paint path — that race
+            // was reproducibly faulting libjvm.so under a burst of pinch ticks (same
+            // pc=libjvm.so+0xa14ca0 across runs). postEvent queues the event onto the
+            // EDT alongside paint events; AWT serializes them naturally.
+            try {
+                java.awt.Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(e);
+            } catch (Throwable t) {
+                System.out.println("[WindowMaximizerAgent] postEvent WHEEL failed: " + t);
+            }
+            System.out.println("[WindowMaximizerAgent] posted WHEEL " + ticks
                     + " to " + target.getClass().getSimpleName());
         });
     }
@@ -187,9 +208,14 @@ public class WindowMaximizerAgent {
                     x, y, 1, true, MouseEvent.BUTTON3);
             MouseEvent up = new MouseEvent(target, MouseEvent.MOUSE_RELEASED, when + 1, 0,
                     x, y, 1, false, MouseEvent.BUTTON3);
-            target.dispatchEvent(down);
-            target.dispatchEvent(up);
-            System.out.println("[WindowMaximizerAgent] dispatched RIGHTCLICK to "
+            try {
+                java.awt.EventQueue eq = java.awt.Toolkit.getDefaultToolkit().getSystemEventQueue();
+                eq.postEvent(down);
+                eq.postEvent(up);
+            } catch (Throwable t) {
+                System.out.println("[WindowMaximizerAgent] postEvent RIGHTCLICK failed: " + t);
+            }
+            System.out.println("[WindowMaximizerAgent] posted RIGHTCLICK to "
                     + target.getClass().getSimpleName());
         });
     }

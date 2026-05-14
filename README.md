@@ -6,7 +6,9 @@
 
 RuneLiteDroid is a single-APK port of the desktop [RuneLite](https://runelite.net/) client — the open-source third-party Old School RuneScape client — to Android. It launches the upstream RuneLite JAR inside a JRE 17 packaged with the app and renders it through a software AWT pipeline (Caciocavallo TTA), so you get the same RuneLite UI and the same plugin ecosystem you have on desktop, on your phone, without proot, without X11, without a separate runtime install.
 
-Everything is bundled. Install one APK, tap the icon, log into your Jagex account, play.
+Everything is bundled. Install one APK, tap the icon, log in, play.
+
+![RuneLiteDroid mining at the mining guild](docs/screenshots/gameplay.png)
 
 ## Status
 
@@ -65,7 +67,6 @@ The `:runelitegame` Android process is separate from `:launcher` and is kept ali
 ## Caveats / unsupported
 
 * **No GPU plugin.** Enabling it in RuneLite settings will fail to load `librlawt.so`.
-* **Jagex accounts only.** RuneLite has dropped username/password login.
 
 ## License
 

@@ -97,6 +97,10 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private static final float ROTATE_DEADZONE_PX = 2f;
     /** Pixels of pinch-distance change per scroll-wheel tick. Smaller = faster zoom. */
     private static final float PINCH_PIXELS_PER_TICK = 30f;
+    /** Minimum gap between wheel-event IPC writes. Reproducible JVM SIGSEGV
+     *  (libjvm.so+0xa14ca0) when this was zero and the user pinched quickly. */
+    private static final long MIN_WHEEL_GAP_MS = 60L;
+    private long mLastWheelWriteMs;
 
     /** Set once we've kicked the JVM launch from onCreate. Activity onCreate can fire
      *  more than once across the process lifetime if Android restarts the activity
@@ -522,14 +526,18 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // AWT MouseWheelListener.
         float distDelta = distance - mLastPinchDistance;
         if (Math.abs(distDelta) >= PINCH_PIXELS_PER_TICK) {
-            int ticks = (int) (distDelta / PINCH_PIXELS_PER_TICK);
-            // Caciocavallo's CTCAndroidInput doesn't handle EVENT_TYPE_SCROLL, so the
-            // AWT-bridge path is a no-op. Instead, write a request line to the
-            // input-bridge file; the window-maximizer agent (which lives inside the
-            // JVM) reads it and posts a MouseWheelEvent directly into AWT's event
-            // queue. Negate ticks because AWT wheel convention is +y = scroll down.
-            writeInputRequest("WHEEL " + (-ticks));
-            mLastPinchDistance += ticks * PINCH_PIXELS_PER_TICK;
+            long nowMs = System.currentTimeMillis();
+            if (nowMs - mLastWheelWriteMs >= MIN_WHEEL_GAP_MS) {
+                int ticks = (int) (distDelta / PINCH_PIXELS_PER_TICK);
+                // Caciocavallo's CTCAndroidInput doesn't handle EVENT_TYPE_SCROLL, so the
+                // AWT-bridge path is a no-op. Instead, write a request line to the
+                // input-bridge file; the window-maximizer agent (which lives inside the
+                // JVM) reads it and posts a MouseWheelEvent directly into AWT's event
+                // queue. Negate ticks because AWT wheel convention is +y = scroll down.
+                writeInputRequest("WHEEL " + (-ticks));
+                mLastPinchDistance += ticks * PINCH_PIXELS_PER_TICK;
+                mLastWheelWriteMs = nowMs;
+            }
         }
 
         mLastMidX = midX;
