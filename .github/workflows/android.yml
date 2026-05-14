@@ -71,6 +71,15 @@ jobs:
           ./scripts/languagelist_updater.sh
           mkdir out
 
+      - name: Strip unused-arch JRE binaries
+        run: |
+          # We only ship arm64-v8a (see Application.mk APP_ABI). The other
+          # bin-*.tar.xz files in the JRE bundle are ~15 MB each and never
+          # used — drop them before the APK is packed.
+          cd app_pojavlauncher/src/main/assets/components/jre-21
+          rm -f bin-arm.tar.xz bin-x86.tar.xz bin-x86_64.tar.xz
+          ls -la
+
       - name: Build Debug .apk
         run: |
           # Build the launcher (debug only — no release keystore in fork)
