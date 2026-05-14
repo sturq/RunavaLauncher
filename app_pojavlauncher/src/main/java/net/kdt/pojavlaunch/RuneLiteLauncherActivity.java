@@ -47,17 +47,18 @@ public class RuneLiteLauncherActivity extends Activity {
     private static final String RUNELITE_URL = "https://github.com/runelite/launcher/releases/latest/download/RuneLite.jar";
     private static final String JAR_NAME = "RuneLite.jar";
     private static final String DIAG_FILENAME = "runelitedroid-diag.txt";
-    // JRE 21 chosen over 17: the AngelAuraMC OpenJDK 17 build for Android has a
-    // deterministic libjvm.so+0xa14ca0 SIGSEGV that fires in Cacio's AWT peer path
-    // shortly after RuneLite's JFrame becomes visible (5+ identical-PC captures,
-    // different triggers). Disassembly puts the fault inside a thread-local JNI
-    // routine reading a freed JavaThread struct — a JVM-internal bug. Switching
-    // OpenJDK builds is the only remaining lever; JRE 21 is officially supported
-    // by RuneLite (their own desktop installers ship 17/21 builds).
-    private static final String JRE_NAME = "Internal-21";
+    // JRE 25 from FCL-Team. We previously shipped AngelAuraMC's JRE 17 (crash at
+    // libjvm.so+0xa14ca0) and JRE 21 (crash at libjvm.so+0xac44cc) — same bug
+    // class, different offsets, JNI handle-list grow corruption that fires under
+    // AWT-driven JNI bursts. FCL-Team is a completely separate OpenJDK port for
+    // Android; disassembly shows the bug is structurally not present at those
+    // offsets in FCL's libjvm.so. Different build, hopefully different (or no)
+    // bug here. RuneLite's class files are Java 11 bytecode so they run on any
+    // JRE 11+.
+    private static final String JRE_NAME = "Internal-25";
     /** Asset path the CI build drops the JRE bundle into. Must match the install
      *  path the InternalRuntime enum points at in NewJREUtil. */
-    private static final String JRE_ASSET_DIR = "components/jre-21";
+    private static final String JRE_ASSET_DIR = "components/jre-25";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {

@@ -41,25 +41,20 @@ jobs:
       # we couldn't work around at the agent or activity level — see the comment
       # in RuneLiteLauncherActivity for the disassembly notes.
 
-      - name: Get JRE21
+      # Trying FCL-Team's OpenJDK 25 build. AngelAuraMC's OpenJDK 21 has a
+      # use-after-free in its JNI handle-list grow function (libjvm.so+0xac44cc,
+      # we verified by disassembly) that fires under any AWT-driven JNI burst.
+      # FCL-Team is a completely different OpenJDK port for Android — at the
+      # same offset its libjvm has unrelated code (cbz, harmless), so at minimum
+      # the specific bug we keep hitting is structurally not present.
+      - name: Get JRE25
         uses: dawidd6/action-download-artifact@v9
         with:
-          workflow: build.yml
-          path: app_pojavlauncher/src/main/assets/components/jre-21
+          path: app_pojavlauncher/src/main/assets/components/jre-25
           workflow_conclusion: completed
-          repo: AngelAuraMC/angelauramc-openjdk-build
-          branch: buildjre17-21
-          name: jre21-pojav
-      #
-      # - name: Get JRE25
-      #   uses: dawidd6/action-download-artifact@v9
-      #   with:
-      #     workflow: build.yml
-      #     path: app_pojavlauncher/src/main/assets/components/jre-25
-      #     workflow_conclusion: completed
-      #     repo: FCL-Team/Android-OpenJDK-Build
-      #     branch: Build_JRE_25
-      #     name: jre25-multiarch
+          repo: FCL-Team/Android-OpenJDK-Build
+          branch: Build_JRE_25
+          name: jre25-multiarch
 
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -73,10 +68,10 @@ jobs:
 
       - name: Strip unused-arch JRE binaries
         run: |
-          # We only ship arm64-v8a (see Application.mk APP_ABI). The other
-          # bin-*.tar.xz files in the JRE bundle are ~15 MB each and never
-          # used — drop them before the APK is packed.
-          cd app_pojavlauncher/src/main/assets/components/jre-21
+          # arm64-v8a only (see Application.mk APP_ABI). FCL's JRE 25 bundle
+          # ships bin-arm.tar.xz, bin-arm64.tar.xz, bin-x86_64.tar.xz —
+          # we keep arm64 and drop the rest. ~15-20 MB savings.
+          cd app_pojavlauncher/src/main/assets/components/jre-25
           rm -f bin-arm.tar.xz bin-x86.tar.xz bin-x86_64.tar.xz
           ls -la
 
