@@ -92,21 +92,29 @@ public class RuneLiteLauncherActivity extends Activity {
         new Thread(() -> {
             String error = null;
             try {
+                diag("JRE install thread: enter");
                 AssetManager am = getAssets();
+                diag("JRE install thread: got AssetManager");
                 String packaged = Tools.read(am.open(JRE_ASSET_DIR + "/version"));
+                diag("JRE install thread: read version=" + packaged);
                 String arch = Architecture.archAsString(Tools.DEVICE_ARCHITECTURE);
-                MultiRTUtils.installRuntimeNamedBinpack(
-                        am.open(JRE_ASSET_DIR + "/universal.tar.xz"),
-                        am.open(JRE_ASSET_DIR + "/bin-" + arch + ".tar.xz"),
-                        JRE_NAME, packaged);
+                diag("JRE install thread: arch=" + arch
+                        + " freeBytes=" + getFilesDir().getFreeSpace());
+                diag("JRE install thread: opening universal.tar.xz");
+                java.io.InputStream uni = am.open(JRE_ASSET_DIR + "/universal.tar.xz");
+                diag("JRE install thread: opening bin-" + arch + ".tar.xz");
+                java.io.InputStream bin = am.open(JRE_ASSET_DIR + "/bin-" + arch + ".tar.xz");
+                diag("JRE install thread: calling installRuntimeNamedBinpack");
+                MultiRTUtils.installRuntimeNamedBinpack(uni, bin, JRE_NAME, packaged);
+                diag("JRE install thread: installRuntimeNamedBinpack done");
                 MultiRTUtils.postPrepare(JRE_NAME);
-                diag("JRE 21unpacked OK, arch=" + arch + " v=" + packaged);
+                diag("JRE 21 unpacked OK, arch=" + arch + " v=" + packaged);
             } catch (Throwable t) {
-                Log.e(TAG, "JRE 21install failed", t);
+                Log.e(TAG, "JRE 21 install failed", t);
                 StringWriter sw = new StringWriter();
                 t.printStackTrace(new PrintWriter(sw));
                 error = t + "\n" + sw;
-                diag("JRE 21install FAILED: " + error);
+                diag("JRE 21 install FAILED: " + error);
             }
             final String finalError = error;
             runOnUiThread(() -> {
