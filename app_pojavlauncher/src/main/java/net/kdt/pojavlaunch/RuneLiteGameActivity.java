@@ -707,6 +707,16 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 //                              correctness bugs live).
                 javaArgList.add("-XX:+UseSerialGC");
                 javaArgList.add("-XX:TieredStopAtLevel=1");
+                // -Xcheck:jni enables strict JNI validation in the JVM. Every JNI
+                // call is checked for correctness — bad jobject refs, dangling
+                // jfieldIDs, cross-thread handle misuse, etc. Catching this in
+                // the act tells us exactly what's corrupting the handle list,
+                // instead of us guessing from disassembly.
+                //
+                // Slows JVM startup noticeably but for debugging the SIGSEGV
+                // on backgrounding it's the right tool. Remove once we've
+                // identified the root cause.
+                javaArgList.add("-Xcheck:jni");
                 // -Xrs: stop the JVM from installing handlers for SIGINT/SIGTERM/SIGHUP.
                 // Android sends those during process lifecycle transitions (backgrounding,
                 // low-memory pressure) and the JVM's default handlers can collide with
