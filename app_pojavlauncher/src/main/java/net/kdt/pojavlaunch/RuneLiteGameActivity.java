@@ -393,10 +393,8 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                     // long-press timer already fired the right-click; nothing more to do.
                 } else if (!mDidMove && heldMs >= LONG_PRESS_MS) {
                     // Fallback right-click: held long enough without significant motion,
-                    // but the Handler.postDelayed timer didn't get its callback in time
-                    // (which happens occasionally — looper congestion, focus loss, etc).
-                    // Fire BUTTON3 from the up-event itself so the menu still appears.
-                    AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_DOWN_MASK);
+                    // but the Handler.postDelayed timer didn't get its callback in time.
+                    fireRightClick();
                 } else if (!mDidMove) {
                     // Short tap → left click.
                     AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
@@ -407,13 +405,34 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     }
 
     /** Custom long-press timer — fires unless cancelled by ACTION_UP or finger drift > slop.
-     *  Sends BUTTON3 via the AWT bridge AND a RIGHTCLICK request through the JVM-side
-     *  input bridge file. Whichever path Cacio honors will produce the menu. */
+     *  Tries every plausible AWT right-click encoding (Cacio's CTCAndroidInput may be
+     *  picky about which mask it accepts) and adds a small delay between press/release
+     *  in case the OSRS menu trigger needs sustained press time. */
     private final Runnable mLongPressFire = () -> {
         mLongPressFired = true;
-        AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_DOWN_MASK);
-        writeInputRequest("RIGHTCLICK");
+        fireRightClick();
     };
+
+    private void fireRightClick() {
+        // Try multiple right-click encodings in sequence — left click works through
+        // BUTTON1_DOWN_MASK so we know the bridge is fine; BUTTON3 mask doesn't seem
+        // to wake up the menu. Send: BUTTON3_DOWN_MASK, BUTTON3_MASK, BUTTON2_DOWN_MASK
+        // (some Cacio variants treat BUTTON2 as secondary), each with a 50ms hold so
+        // the press is sustained long enough for the OSRS click handler to register.
+        new Thread(() -> {
+            int[] masks = { AWTInputEvent.BUTTON3_DOWN_MASK, AWTInputEvent.BUTTON3_MASK,
+                            AWTInputEvent.BUTTON2_DOWN_MASK };
+            for (int mask : masks) {
+                try {
+                    AWTInputBridge.sendMousePress(mask, true);
+                    Thread.sleep(60);
+                    AWTInputBridge.sendMousePress(mask, false);
+                    Thread.sleep(40);
+                } catch (Throwable ignored) {}
+            }
+        }, "RightClickEmit").start();
+        runOnUiThread(() -> Toast.makeText(this, "right-click sent (3 encodings)", Toast.LENGTH_SHORT).show());
+    }
 
     /** Append one IPC line for the JVM-side input bridge agent to consume.
      *  External-files dir is shared between our process and the :runelitegame
