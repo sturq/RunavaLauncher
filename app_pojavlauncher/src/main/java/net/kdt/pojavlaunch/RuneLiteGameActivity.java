@@ -717,6 +717,17 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 //                              correctness bugs live).
                 javaArgList.add("-XX:+UseSerialGC");
                 javaArgList.add("-XX:TieredStopAtLevel=1");
+                // -Xrs: stop the JVM from installing handlers for SIGINT/SIGTERM/SIGHUP.
+                // Android sends those during process lifecycle transitions (backgrounding,
+                // low-memory pressure) and the JVM's default handlers can collide with
+                // Android's, sometimes faulting libjvm during signal dispatch. Telling
+                // the JVM to ignore those signals lets Android's own handlers run cleanly.
+                javaArgList.add("-Xrs");
+                // -XX:-UsePerfData: drop the hsperfdata shared-memory perf counters. They
+                // live in /tmp on most JVMs but Android's tmp policy is weird and the
+                // memory-mapped file gets out of sync during process freezes — eliminating
+                // another moving part during activity lifecycle.
+                javaArgList.add("-XX:-UsePerfData");
                 // Sync-extract the window-maximizer agent into our own files dir so we
                 // never race the async unpackComponents flow.
                 File agentJar = extractAgentJar();
