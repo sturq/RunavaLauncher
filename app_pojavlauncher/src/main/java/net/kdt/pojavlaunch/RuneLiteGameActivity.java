@@ -404,34 +404,19 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         return true;
     }
 
-    /** Custom long-press timer — fires unless cancelled by ACTION_UP or finger drift > slop.
-     *  Tries every plausible AWT right-click encoding (Cacio's CTCAndroidInput may be
-     *  picky about which mask it accepts) and adds a small delay between press/release
-     *  in case the OSRS menu trigger needs sustained press time. */
+    /** Custom long-press timer — fires unless cancelled by ACTION_UP or finger drift > slop. */
     private final Runnable mLongPressFire = () -> {
         mLongPressFired = true;
         fireRightClick();
     };
 
+    /** Safest single-shot right-click. Earlier multi-encoding + threaded variant
+     *  crashed the JVM — most likely Cacio doesn't like rapid sustained mouse
+     *  events fed from a non-EDT thread. One AWT-bridge call, no threading.
+     *  This is what worked via GestureDetector.onLongPress in early builds. */
     private void fireRightClick() {
-        // Try multiple right-click encodings in sequence — left click works through
-        // BUTTON1_DOWN_MASK so we know the bridge is fine; BUTTON3 mask doesn't seem
-        // to wake up the menu. Send: BUTTON3_DOWN_MASK, BUTTON3_MASK, BUTTON2_DOWN_MASK
-        // (some Cacio variants treat BUTTON2 as secondary), each with a 50ms hold so
-        // the press is sustained long enough for the OSRS click handler to register.
-        new Thread(() -> {
-            int[] masks = { AWTInputEvent.BUTTON3_DOWN_MASK, AWTInputEvent.BUTTON3_MASK,
-                            AWTInputEvent.BUTTON2_DOWN_MASK };
-            for (int mask : masks) {
-                try {
-                    AWTInputBridge.sendMousePress(mask, true);
-                    Thread.sleep(60);
-                    AWTInputBridge.sendMousePress(mask, false);
-                    Thread.sleep(40);
-                } catch (Throwable ignored) {}
-            }
-        }, "RightClickEmit").start();
-        runOnUiThread(() -> Toast.makeText(this, "right-click sent (3 encodings)", Toast.LENGTH_SHORT).show());
+        AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_DOWN_MASK);
+        Toast.makeText(this, "right-click", Toast.LENGTH_SHORT).show();
     }
 
     /** Append one IPC line for the JVM-side input bridge agent to consume.
