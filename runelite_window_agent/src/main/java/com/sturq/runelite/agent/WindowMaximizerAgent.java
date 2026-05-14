@@ -37,26 +37,42 @@ public class WindowMaximizerAgent {
 
     private static void startPoller() {
         Thread t = new Thread(() -> {
-            // Burn the first few seconds with a tighter loop so the first frame opens maxed.
+            // Burn the first 30s aggressively so the first JFrame opens maxed, then stop —
+            // RuneLite's ContainableFrame manages frame size based on its own UI state
+            // (sidebar open/closed etc.). Keep fighting it past initial setup and
+            // every resize churns AWT enough to faceplant libjvm with a SIGSEGV.
             long deadline = System.currentTimeMillis() + 30_000L;
-            while (true) {
+            while (System.currentTimeMillis() < deadline) {
                 try {
-                    sweep();
+                    sweepOnEdt();
                 } catch (Throwable ignored) {
                     // Don't let the poller die — AWT may still be coming up.
                 }
                 try {
-                    Thread.sleep(System.currentTimeMillis() < deadline ? 250L : 1000L);
+                    Thread.sleep(500L);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     return;
                 }
             }
+            System.out.println("[WindowMaximizerAgent] initial-maximize window closed");
         }, "WindowMaximizerAgent");
         t.setDaemon(true);
         t.start();
         startInputBridge();
         System.out.println("[WindowMaximizerAgent] poller started");
+    }
+
+    /** Hand sweep() off to the EDT. All Frame.setSize / setExtendedState mutations have
+     *  to run on the AWT event-dispatch thread, otherwise they race with paint/layout
+     *  in Cacio's component-peer pipeline and reproducibly crash libjvm.so+0xa14ca0.
+     *  invokeLater is non-blocking; if the EDT is busy we just skip this tick. */
+    private static void sweepOnEdt() {
+        try {
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                try { sweep(); } catch (Throwable ignored) {}
+            });
+        } catch (Throwable ignored) {}
     }
 
     /** File-based IPC for input events the Activity can't deliver via the AWT
@@ -220,6 +236,13 @@ public class WindowMaximizerAgent {
         });
     }
 
+    /** Set of Frames we've already maximized at least once. RuneLite's ContainableFrame
+     *  resizes the JFrame on its own (sidebar-open / -close especially), and re-maximizing
+     *  on every change starts a tug-of-war that piles up AWT events fast enough to fault
+     *  libjvm. So: maximize the very first time we see a Frame, then leave it alone. */
+    private static final java.util.Set<Frame> sMaximized =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
     private static void sweep() {
         Frame[] frames = Frame.getFrames();
         if (frames.length == 0) return;
@@ -230,6 +253,7 @@ public class WindowMaximizerAgent {
             // Frame.getFrames() returns only Frames (Dialog extends Window directly,
             // not Frame), so popups (FatalErrorDialog etc.) are never in this array.
             if (!f.isVisible()) continue;
+            if (sMaximized.contains(f)) continue;
             try {
                 int curW = f.getWidth();
                 int curH = f.getHeight();
@@ -247,6 +271,7 @@ public class WindowMaximizerAgent {
                             + " -> " + screen.width + "x" + screen.height + " @ 0,0"
                             + " (state=" + Integer.toHexString(f.getExtendedState()) + ")");
                 }
+                sMaximized.add(f);
             } catch (Throwable t) {
                 System.out.println("[WindowMaximizerAgent] resize failed: " + t);
             }
