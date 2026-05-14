@@ -72,11 +72,12 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private boolean mUiZoneTouch;      // touch-down was in the right-side UI strip
     private boolean mDidMove;          // finger moved past TAP_SLOP — release should NOT fire a click
     private float mDownX, mDownY;
+    private long mDownTimeMs;          // for the ACTION_UP fallback that promotes long holds to right-click
     private static final float TAP_SLOP_PX = 5f;          // any move past this disables the tap-on-release
     private static final float DRAG_START_PX = 8f;        // movement that promotes from tap to drag/camera
     private static final float UI_ZONE_FRACTION = 0.75f;  // > this fraction of canvas width = UI strip
-    private static final long LONG_PRESS_MS = 350L;       // hold this long without moving = right-click
-    private static final float LONG_PRESS_SLOP_PX = 36f;  // movement that cancels long-press (natural jitter)
+    private static final long LONG_PRESS_MS = 200L;       // hold this long without moving = right-click
+    private static final float LONG_PRESS_SLOP_PX = 60f;  // movement that cancels long-press (natural jitter)
     private static final long ARROW_REPEAT_MS = 30L;       // how often to spam arrow press while held
 
     // Two-finger gesture state for camera rotate (arrow keys) + zoom (scroll wheel).
@@ -334,6 +335,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 mDidMove = false;
                 mDownX = x;
                 mDownY = y;
+                mDownTimeMs = System.currentTimeMillis();
                 mUiZoneTouch = mCanvas.getWidth() > 0
                         && x > mCanvas.getWidth() * UI_ZONE_FRACTION;
                 sendScaledMousePosition(x, y);
@@ -380,16 +382,23 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 mUiHandler.removeCallbacks(mLongPressFire);
+                long heldMs = System.currentTimeMillis() - mDownTimeMs;
                 if (mCameraDragging) {
                     releaseAllArrows();
                     mCameraDragging = false;
                 } else if (mLeftButtonHeld) {
                     AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK, false);
                     mLeftButtonHeld = false;
-                } else if (!mLongPressFired && !mDidMove) {
-                    // Only fire a click if this was a genuine tap (no meaningful movement,
-                    // no long-press, no drag/camera transition). A swipe-that-didn't-make-it-
-                    // to-drag-threshold no longer auto-clicks.
+                } else if (mLongPressFired) {
+                    // long-press timer already fired the right-click; nothing more to do.
+                } else if (!mDidMove && heldMs >= LONG_PRESS_MS) {
+                    // Fallback right-click: held long enough without significant motion,
+                    // but the Handler.postDelayed timer didn't get its callback in time
+                    // (which happens occasionally — looper congestion, focus loss, etc).
+                    // Fire BUTTON3 from the up-event itself so the menu still appears.
+                    AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_DOWN_MASK);
+                } else if (!mDidMove) {
+                    // Short tap → left click.
                     AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK);
                 }
                 break;
