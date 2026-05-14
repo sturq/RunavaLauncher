@@ -3,14 +3,22 @@ package net.kdt.pojavlaunch;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.AssetManager;
+import android.database.Cursor;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.preference.PreferenceManager;
+import android.provider.MediaStore;
 import android.util.Log;
 import android.widget.Toast;
+
+import java.io.OutputStream;
 
 import net.kdt.pojavlaunch.multirt.MultiRTUtils;
 
@@ -296,9 +304,6 @@ public class RuneLiteLauncherActivity extends Activity {
     private void copyRuneLiteLogToDownloads() {
         File ext = getExternalFilesDir(null);
         if (ext == null) return;
-        File extPub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-        if (extPub == null) return;
-        extPub.mkdirs();
         // Pair: source -> dest filename in Downloads
         String[][] pairs = {
                 {".runelite/logs/launcher.log", "runelite-launcher.log"},
@@ -311,23 +316,83 @@ public class RuneLiteLauncherActivity extends Activity {
                     diag("log skip: " + pair[0] + " (missing or empty)");
                     continue;
                 }
-                File dst = new File(extPub, pair[1]);
-                try (java.io.FileInputStream in = new java.io.FileInputStream(src);
-                     FileOutputStream out = new FileOutputStream(dst)) {
-                    byte[] buf = new byte[16384];
-                    int n;
-                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-                }
-                diag("copied " + pair[0] + " -> Downloads/" + pair[1] + " (" + dst.length() + " bytes)");
+                long bytes = writeToDownloads(pair[1], src, /*append=*/false);
+                diag("copied " + pair[0] + " -> Downloads/" + pair[1] + " (" + bytes + " bytes)");
             } catch (Throwable t) {
                 diag("copy of " + pair[0] + " failed: " + t);
             }
         }
+        // Snapshot the in-app diag log into Downloads too — the per-line appender
+        // below also writes there, but only on Android <10. On 10+ we can't open
+        // an OutputStream in append mode on a MediaStore URI, so we snapshot the
+        // app-private diag (which always works) to Downloads on each launch.
+        try {
+            File diagSrc = new File(ext, DIAG_FILENAME);
+            if (diagSrc.exists() && diagSrc.length() > 0) {
+                long n = writeToDownloads(DIAG_FILENAME, diagSrc, /*append=*/false);
+                Log.i(TAG, "snapshotted diag to Downloads (" + n + " bytes)");
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "diag snapshot failed", t);
+        }
+    }
+
+    /** Write `src`'s contents to /Downloads/`dstName`, replacing any existing file
+     *  with that name. Uses MediaStore on Android 10+ (scoped storage), and
+     *  falls back to direct FileWriter on older devices. Returns dest size. */
+    private long writeToDownloads(String dstName, File src, boolean append) throws Exception {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContentResolver resolver = getContentResolver();
+            Uri collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+            // If a file with this name already exists in our collection (we created it
+            // on a prior launch), delete it so the next insert isn't given " (1)".
+            try (Cursor c = resolver.query(collection,
+                    new String[]{MediaStore.Downloads._ID},
+                    MediaStore.Downloads.DISPLAY_NAME + "=?",
+                    new String[]{dstName}, null)) {
+                while (c != null && c.moveToNext()) {
+                    Uri u = Uri.withAppendedPath(collection, c.getString(0));
+                    resolver.delete(u, null, null);
+                }
+            } catch (Throwable ignored) {}
+
+            ContentValues cv = new ContentValues();
+            cv.put(MediaStore.Downloads.DISPLAY_NAME, dstName);
+            cv.put(MediaStore.Downloads.MIME_TYPE, "text/plain");
+            cv.put(MediaStore.Downloads.IS_PENDING, 1);
+            Uri uri = resolver.insert(collection, cv);
+            if (uri == null) throw new java.io.IOException("MediaStore insert returned null for " + dstName);
+
+            try (OutputStream out = resolver.openOutputStream(uri);
+                 FileInputStream in = new FileInputStream(src)) {
+                if (out == null) throw new java.io.IOException("openOutputStream null for " + dstName);
+                byte[] buf = new byte[16384];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
+            cv.clear();
+            cv.put(MediaStore.Downloads.IS_PENDING, 0);
+            resolver.update(uri, cv, null, null);
+            return src.length();
+        }
+        // Legacy path: direct write to public Downloads (works on pre-scoped storage)
+        File extPub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        if (extPub == null) throw new java.io.IOException("public Downloads unavailable");
+        extPub.mkdirs();
+        File dst = new File(extPub, dstName);
+        try (java.io.FileInputStream in = new java.io.FileInputStream(src);
+             FileOutputStream out = new FileOutputStream(dst, append)) {
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        }
+        return dst.length();
     }
 
     private void diag(String msg) {
         Log.i(TAG, msg);
         try {
+            // Always-on app-private append. /storage/emulated/0/Android/data/<pkg>/files/
             File ext = getExternalFilesDir(null);
             if (ext != null) {
                 ext.mkdirs();
@@ -337,17 +402,12 @@ public class RuneLiteLauncherActivity extends Activity {
                     w.write(ts + " " + msg + "\n");
                 }
             }
-            File extPub = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-            if (extPub != null) {
-                extPub.mkdirs();
-                File logPub = new File(extPub, DIAG_FILENAME);
-                try (FileWriter w = new FileWriter(logPub, true)) {
-                    String ts = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date());
-                    w.write(ts + " " + msg + "\n");
-                }
-            }
         } catch (Throwable t) {
             Log.w(TAG, "diag write failed", t);
         }
+        // We deliberately don't write to /Downloads/ from here — on Android 10+
+        // direct writes to public Downloads silently fail under scoped storage.
+        // The full diag is snapshotted via MediaStore on each launch (see
+        // copyRuneLiteLogToDownloads → writeToDownloads).
     }
 }

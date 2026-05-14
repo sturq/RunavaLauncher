@@ -27,7 +27,23 @@ public class ExitActivity extends AppCompatActivity {
             isSignal = extras.getBoolean("isSignal", false);
         }
 
-        int message = isSignal ? R.string.mcn_signal_title : R.string.mcn_exit_title;
+        // Signal-based exit = JVM crashed (SIGSEGV / SIGABRT). For RuneLiteDroid
+        // we'd rather auto-restart than show a popup — the user is mid-session,
+        // the JVM died, restart RuneLite from scratch so they re-connect to OSRS.
+        // Takes ~20–30s but is seamless from their perspective.
+        if (isSignal) {
+            try {
+                Intent i = new Intent(this, RuneLiteLauncherActivity.class);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                startActivity(i);
+            } catch (Throwable ignored) {
+                // If for any reason we can't restart, fall through to the dialog.
+            }
+            finish();
+            return;
+        }
+
+        int message = R.string.mcn_exit_title;
 
         new AlertDialog.Builder(this)
                 .setMessage(getString(message,code))
