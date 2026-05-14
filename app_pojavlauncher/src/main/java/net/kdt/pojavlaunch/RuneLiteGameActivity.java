@@ -121,6 +121,8 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         } catch (Throwable t) {
             Log.w("RuneLiteGame", "could not start RuneLiteGameService", t);
         }
+        // Clear any stale pause sentinel from a prior session that exited abnormally.
+        setAgentPaused(false);
         // Cacio at 60% — middle ground. 75% had RuneLite's sidebar icons tiny; 50% made
         // them tappable but the OSRS canvas got soft from the upscale. 60% keeps the game
         // sharp-ish while bumping every UI element ~67% larger than 100%.
@@ -448,6 +450,37 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
      *  check), which is what triggers context menus on Linux/AWT. */
     private void fireRightClick() {
         AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_MASK);
+    }
+
+    /** Sentinel file the JVM-side agent watches. While it exists, the agent
+     *  pauses its maximize sweep AND drops incoming wheel/right-click events
+     *  instead of dispatching them. Pause/resume the agent in lockstep with
+     *  the activity so AWT mutations don't race with surface destroy/recreate. */
+    private void setAgentPaused(boolean paused) {
+        try {
+            File extDir = getExternalFilesDir(null);
+            if (extDir == null) return;
+            File sentinel = new File(extDir, ".runelitedroid_paused");
+            if (paused) {
+                if (!sentinel.exists()) sentinel.createNewFile();
+            } else {
+                if (sentinel.exists()) sentinel.delete();
+            }
+        } catch (Throwable t) {
+            Log.w("RuneLiteGame", "setAgentPaused(" + paused + ") failed", t);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        setAgentPaused(true);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        setAgentPaused(false);
     }
 
     /** Append one IPC line for the JVM-side input bridge agent to consume.

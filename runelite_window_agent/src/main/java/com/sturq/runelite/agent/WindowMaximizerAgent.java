@@ -5,7 +5,6 @@ import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Frame;
 import java.awt.KeyboardFocusManager;
-import java.awt.Point;
 import java.awt.Toolkit;
 import java.awt.Window;
 import java.awt.event.MouseEvent;
@@ -20,10 +19,15 @@ import java.lang.instrument.Instrumentation;
  * the Caciocavallo virtual screen instead of sitting at its default size
  * with black around it.
  *
- * Implementation: a daemon thread that polls Frame.getFrames() and sets
- * MAXIMIZED_BOTH on anything visible that isn't already maximized. Event-
- * listener approach (addAWTEventListener) was unreliable at premain time
- * because AWT isn't fully initialized yet. Polling is dumb but robust.
+ * Daemon thread polls Frame.getFrames() and sets MAXIMIZED_BOTH on anything
+ * visible that isn't already at the screen size. This is the layout that
+ * worked for the user's mining session at b46aec77b.
+ *
+ * Background-crash workaround: while the Android activity is paused it
+ * writes a sentinel file ($user.home/.runelitedroid_paused). Both the
+ * maximize sweep and the input bridge check for that file and skip all
+ * AWT mutation while it exists. AWT paint events from the EDT still run,
+ * but we don't add new race targets from our daemon threads.
  */
 public class WindowMaximizerAgent {
 
@@ -35,34 +39,50 @@ public class WindowMaximizerAgent {
         startPoller();
     }
 
+    /** Sentinel file the Android activity drops while paused. While present,
+     *  the agent doesn't touch AWT — no resizes, no wheel events, no clicks.
+     *  We resolve it lazily from user.home, same dir as the input request file. */
+    private static volatile File sPausedSentinel;
+
+    private static File pausedSentinel() {
+        File f = sPausedSentinel;
+        if (f == null) {
+            String home = System.getProperty("user.home");
+            if (home != null && !home.isEmpty()) {
+                f = new File(home, ".runelitedroid_paused");
+                sPausedSentinel = f;
+            }
+        }
+        return f;
+    }
+
+    private static boolean isPaused() {
+        File f = pausedSentinel();
+        return f != null && f.exists();
+    }
+
     private static void startPoller() {
         Thread t = new Thread(() -> {
-            // Stop after 30s: every JFrame we'll ever see has appeared, and continuing
-            // to fight RuneLite's ContainableFrame past that point produces a tug-of-war
-            // that piles up AWT events.
+            // Burn the first few seconds with a tighter loop so the first frame opens maxed.
             long deadline = System.currentTimeMillis() + 30_000L;
-            while (System.currentTimeMillis() < deadline) {
-                try { sweepOnEdt(); } catch (Throwable ignored) {}
-                try { Thread.sleep(500L); }
-                catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
+            while (true) {
+                try {
+                    if (!isPaused()) sweep();
+                } catch (Throwable ignored) {
+                    // Don't let the poller die — AWT may still be coming up.
+                }
+                try {
+                    Thread.sleep(System.currentTimeMillis() < deadline ? 250L : 1000L);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
             }
         }, "WindowMaximizerAgent");
         t.setDaemon(true);
         t.start();
         startInputBridge();
         System.out.println("[WindowMaximizerAgent] poller started");
-    }
-
-    /** Hand sweep() off to the EDT. All Frame mutations have to run on the AWT
-     *  event-dispatch thread; otherwise they race with paint/layout in Cacio's
-     *  component-peer pipeline. invokeLater is non-blocking — if the EDT is busy
-     *  we just skip this tick. */
-    private static void sweepOnEdt() {
-        try {
-            javax.swing.SwingUtilities.invokeLater(() -> {
-                try { sweep(); } catch (Throwable ignored) {}
-            });
-        } catch (Throwable ignored) {}
     }
 
     /** File-based IPC for input events the Activity can't deliver via the AWT
@@ -83,7 +103,9 @@ public class WindowMaximizerAgent {
         Thread t = new Thread(() -> {
             while (true) {
                 try {
-                    if (request.exists() && request.length() > 0) {
+                    // Skip request processing entirely while paused so we don't
+                    // post AWT events while the activity is in the background.
+                    if (!isPaused() && request.exists() && request.length() > 0) {
                         String content;
                         try (RandomAccessFile raf = new RandomAccessFile(request, "rw")) {
                             byte[] buf = new byte[(int) Math.min(raf.length(), 1024)];
@@ -145,7 +167,6 @@ public class WindowMaximizerAgent {
     private static Component findDeepestAt(Container container, int x, int y) {
         Component direct = container.findComponentAt(x, y);
         if (direct != null && direct != container) return direct;
-        // Fall back to walking children manually if findComponentAt punted.
         Component[] kids = container.getComponents();
         for (Component k : kids) {
             if (!k.isVisible()) continue;
@@ -160,27 +181,20 @@ public class WindowMaximizerAgent {
         return container;
     }
 
-    /** Last-seen wheel event timestamp. Hard rate-limit: ignore wheel ticks that
-     *  arrive within MIN_WHEEL_GAP_MS of the last one. Spamming AWT with many
-     *  back-to-back wheel events in a tight burst was reproducibly crashing
-     *  libjvm.so+0xa14ca0 — same pc, two captures in a row. Slowing them down
-     *  keeps Cacio's component-peer paint path off the EDT-dispatch hot loop. */
+    /** Hard rate-limit: a burst of wheel events reproducibly crashed libjvm.so
+     *  back when we used Component.dispatchEvent directly. Keep the limit even
+     *  though we're now on the system event queue — defense in depth. */
     private static volatile long sLastWheelMs = 0L;
     private static final long MIN_WHEEL_GAP_MS = 60L;
 
     private static void postWheel(final int ticks) {
         long now = System.currentTimeMillis();
-        if (now - sLastWheelMs < MIN_WHEEL_GAP_MS) {
-            // Drop. The Android side spams a tick per pinch frame; ~16 ticks/sec is plenty.
-            return;
-        }
+        if (now - sLastWheelMs < MIN_WHEEL_GAP_MS) return;
         sLastWheelMs = now;
-        // Defer to EDT — concurrent AWT mutation from the daemon thread that polls
-        // the file was triggering a SIGSEGV in libjvm.so previously.
         javax.swing.SwingUtilities.invokeLater(() -> {
+            if (isPaused()) return;
             Component target = pickWheelTarget();
             if (target == null) return;
-            // Coords are in the target Component's coord space — center it.
             int x = target.getWidth() / 2, y = target.getHeight() / 2;
             long when = System.currentTimeMillis();
             MouseWheelEvent e = new MouseWheelEvent(
@@ -188,24 +202,19 @@ public class WindowMaximizerAgent {
                     x, y, 0, false,
                     MouseWheelEvent.WHEEL_UNIT_SCROLL,
                     Math.abs(ticks), ticks);
-            // Post via the system event queue rather than calling Component.dispatchEvent
-            // directly. Direct dispatch fires listeners synchronously and bypasses the
-            // EDT's serialization with Cacio's component-peer paint path — that race
-            // was reproducibly faulting libjvm.so under a burst of pinch ticks (same
-            // pc=libjvm.so+0xa14ca0 across runs). postEvent queues the event onto the
-            // EDT alongside paint events; AWT serializes them naturally.
+            // Post via the system event queue rather than Component.dispatchEvent so
+            // AWT serializes the wheel event alongside paint events on the EDT.
             try {
-                java.awt.Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(e);
+                Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(e);
             } catch (Throwable t) {
                 System.out.println("[WindowMaximizerAgent] postEvent WHEEL failed: " + t);
             }
-            System.out.println("[WindowMaximizerAgent] posted WHEEL " + ticks
-                    + " to " + target.getClass().getSimpleName());
         });
     }
 
     private static void postRightClick() {
         javax.swing.SwingUtilities.invokeLater(() -> {
+            if (isPaused()) return;
             Component target = pickWheelTarget();
             if (target == null) return;
             int x = target.getWidth() / 2, y = target.getHeight() / 2;
@@ -215,23 +224,14 @@ public class WindowMaximizerAgent {
             MouseEvent up = new MouseEvent(target, MouseEvent.MOUSE_RELEASED, when + 1, 0,
                     x, y, 1, false, MouseEvent.BUTTON3);
             try {
-                java.awt.EventQueue eq = java.awt.Toolkit.getDefaultToolkit().getSystemEventQueue();
+                java.awt.EventQueue eq = Toolkit.getDefaultToolkit().getSystemEventQueue();
                 eq.postEvent(down);
                 eq.postEvent(up);
             } catch (Throwable t) {
                 System.out.println("[WindowMaximizerAgent] postEvent RIGHTCLICK failed: " + t);
             }
-            System.out.println("[WindowMaximizerAgent] posted RIGHTCLICK to "
-                    + target.getClass().getSimpleName());
         });
     }
-
-    /** Set of Frames we've already maximized at least once. RuneLite's ContainableFrame
-     *  resizes the JFrame on its own (sidebar-open / -close especially), and re-maximizing
-     *  on every change starts a tug-of-war that piles up AWT events fast enough to fault
-     *  libjvm. So: maximize the very first time we see a Frame, then leave it alone. */
-    private static final java.util.Set<Frame> sMaximized =
-            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
     private static void sweep() {
         Frame[] frames = Frame.getFrames();
@@ -240,33 +240,26 @@ public class WindowMaximizerAgent {
         if (screen == null || screen.width <= 0 || screen.height <= 0) return;
         for (Frame f : frames) {
             if (f == null) continue;
+            // Frame.getFrames() returns only Frames (Dialog extends Window directly,
+            // not Frame), so popups (FatalErrorDialog etc.) are never in this array.
             if (!f.isVisible()) continue;
-            if (sMaximized.contains(f)) continue;
             try {
                 int curW = f.getWidth();
                 int curH = f.getHeight();
                 int curX = f.getX();
                 int curY = f.getY();
-                // Clamp into Cacio's managed-screen bounds. RuneLite opens at
-                // 767x528 @ 511,41 with a 1278x568 Cacio screen, so the bottom-right
-                // corner sits at (1278, 569) — one pixel below the screen height.
-                // Cacio's native peer-paint buffer is sized exactly to the screen,
-                // and any pixel outside it is an OOB write that segfaults libjvm
-                // at +0xa14ca0 (five identical captures, varying triggers).
-                //
-                // setBounds is one call so it doesn't cross the EDT boundary mid-
-                // mutation. We deliberately don't call setExtendedState (that path
-                // is what tripped the early MAXIMIZED_BOTH crashes) or validate
-                // (let AWT re-layout naturally on the size change).
                 if (curW != screen.width || curH != screen.height || curX != 0 || curY != 0) {
-                    f.setBounds(0, 0, screen.width, screen.height);
-                    System.out.println("[WindowMaximizerAgent] setBounds '" + f.getTitle()
+                    f.setLocation(0, 0);
+                    f.setSize(screen.width, screen.height);
+                    f.setExtendedState(f.getExtendedState() | Frame.MAXIMIZED_BOTH);
+                    f.validate();
+                    System.out.println("[WindowMaximizerAgent] resize '" + f.getTitle()
                             + "' " + curW + "x" + curH + " @ " + curX + "," + curY
-                            + " -> " + screen.width + "x" + screen.height + " @ 0,0");
+                            + " -> " + screen.width + "x" + screen.height + " @ 0,0"
+                            + " (state=" + Integer.toHexString(f.getExtendedState()) + ")");
                 }
-                sMaximized.add(f);
             } catch (Throwable t) {
-                System.out.println("[WindowMaximizerAgent] setBounds failed: " + t);
+                System.out.println("[WindowMaximizerAgent] resize failed: " + t);
             }
         }
     }
