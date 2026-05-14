@@ -107,10 +107,22 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // Orientation handled in code so PiP can request UNSPECIFIED freely —
-        // a fixed orientation in the manifest blocks PiP entry on some devices.
-        setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         applyFullscreenFlags();
+        // On Android 13+ the foreground service notification is only shown
+        // (and the FGS is only treated as fully-protected by the OS) if we
+        // hold POST_NOTIFICATIONS at runtime. Pojav requests this from its
+        // launcher; we never did. Without the perm Android can SIGKILL our
+        // :runelitegame process when backgrounded — which is exactly the bug
+        // we've been chasing. Request it the first time the game activity
+        // starts.
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(this,
+                    android.Manifest.permission.POST_NOTIFICATIONS)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                androidx.core.app.ActivityCompat.requestPermissions(this,
+                        new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 4242);
+            }
+        }
         // Kick the foreground service first so Android doesn't reap :runelitegame
         // while we're backgrounded — without this, switching apps for ~10s and
         // back causes a SIGSEGV in libjvm.so as the JVM dies mid-AWT-dispatch.
@@ -453,58 +465,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         setAgentPaused(false);
     }
 
-    /**
-     * Fires when the user is leaving the activity intentionally (Home button,
-     * recents). Switch to Picture-in-Picture so the activity stays foreground-
-     * adjacent instead of going into Android 13+'s cached-app freezer — which
-     * has been SIGSTOPping our :runelitegame process at bad AWT moments and
-     * crashing libjvm. PiP keeps the activity in a small floating window; on
-     * tap it returns to full size, no surface destroy/recreate, JVM stays
-     * alive throughout.
-     */
-    @Override
-    public void onUserLeaveHint() {
-        super.onUserLeaveHint();
-        tryEnterPip("onUserLeaveHint");
-    }
-
-    private void tryEnterPip(String trigger) {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) {
-            System.out.println("[RuneLiteGameActivity] PiP " + trigger + ": SDK<26 skip");
-            return;
-        }
-        boolean supported = getPackageManager()
-                .hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE);
-        if (!supported) {
-            System.out.println("[RuneLiteGameActivity] PiP " + trigger + ": device unsupported");
-            return;
-        }
-        try {
-            // Release orientation lock — PiP fails on some devices if the
-            // activity is in a fixed orientation. Restore in onPictureInPictureModeChanged.
-            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-            android.app.PictureInPictureParams.Builder b =
-                    new android.app.PictureInPictureParams.Builder();
-            b.setAspectRatio(new android.util.Rational(16, 9));
-            boolean ok = enterPictureInPictureMode(b.build());
-            System.out.println("[RuneLiteGameActivity] PiP " + trigger
-                    + ": enterPictureInPictureMode -> " + ok);
-        } catch (Throwable t) {
-            System.out.println("[RuneLiteGameActivity] PiP " + trigger + ": EXCEPTION " + t);
-            Log.w("RuneLiteGame", "enterPictureInPictureMode failed", t);
-        }
-    }
-
-    @Override
-    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode,
-                                              android.content.res.Configuration newConfig) {
-        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
-        if (!isInPictureInPictureMode) {
-            // Exiting PiP — restore landscape lock.
-            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-        }
-        System.out.println("[RuneLiteGameActivity] PiP mode changed: inPip=" + isInPictureInPictureMode);
-    }
 
     /** Append one IPC line for the JVM-side input bridge agent to consume.
      *  External-files dir is shared between our process and the :runelitegame
