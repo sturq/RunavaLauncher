@@ -470,6 +470,13 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     @Override
     protected void onPause() {
         super.onPause();
+        // Pojav signals Minecraft via GLFW window attributes on pause/resume
+        // (FOCUSED=0, VISIBLE=0) and Minecraft's render loop reads those and
+        // idles. AWT has no GLFW equivalent — the standard signal is
+        // Frame.setExtendedState(ICONIFIED). Send that to the JVM-side agent
+        // via the existing IPC pipe so Swing's RepaintManager coalesces
+        // paints and the EDT goes mostly idle while we're backgrounded.
+        writeInputRequest("ICONIFY");
         setAgentPaused(true);
     }
 
@@ -477,6 +484,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     protected void onResume() {
         super.onResume();
         setAgentPaused(false);
+        writeInputRequest("DEICONIFY");
     }
 
     /** Append one IPC line for the JVM-side input bridge agent to consume.

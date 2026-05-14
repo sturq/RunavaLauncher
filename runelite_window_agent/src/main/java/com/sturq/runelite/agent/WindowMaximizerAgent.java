@@ -103,9 +103,11 @@ public class WindowMaximizerAgent {
         Thread t = new Thread(() -> {
             while (true) {
                 try {
-                    // Skip request processing entirely while paused so we don't
-                    // post AWT events while the activity is in the background.
-                    if (!isPaused() && request.exists() && request.length() > 0) {
+                    // Always process the file — lifecycle commands like ICONIFY /
+                    // DEICONIFY must run during pause/resume transitions so we
+                    // can signal AWT to idle. handleInputLine() drops user-input
+                    // commands (WHEEL/RIGHTCLICK) on its own when paused.
+                    if (request.exists() && request.length() > 0) {
                         String content;
                         try (RandomAccessFile raf = new RandomAccessFile(request, "rw")) {
                             byte[] buf = new byte[(int) Math.min(raf.length(), 1024)];
@@ -129,7 +131,17 @@ public class WindowMaximizerAgent {
     private static void handleInputLine(String line) {
         if (line.isEmpty()) return;
         try {
-            if (line.startsWith("WHEEL ")) {
+            // Lifecycle commands run regardless of pause state — they're what
+            // takes us into / out of the paused state. User-input commands
+            // (WHEEL, RIGHTCLICK) drop while paused so we don't post AWT
+            // events while the activity is in the background.
+            if (line.equals("ICONIFY")) {
+                setFrameState(Frame.ICONIFIED);
+            } else if (line.equals("DEICONIFY")) {
+                setFrameState(Frame.NORMAL);
+            } else if (isPaused()) {
+                // drop user input
+            } else if (line.startsWith("WHEEL ")) {
                 int ticks = Integer.parseInt(line.substring(6).trim());
                 postWheel(ticks);
             } else if (line.equals("RIGHTCLICK")) {
@@ -138,6 +150,39 @@ public class WindowMaximizerAgent {
         } catch (Throwable t) {
             System.out.println("[WindowMaximizerAgent] bad input line '" + line + "': " + t);
         }
+    }
+
+    /** Tell every visible Frame whether the OS-level window is minimized. Pojav
+     *  does the equivalent for GLFW via nativeSetWindowAttrib(VISIBLE, 0/1) on
+     *  pause/resume — Minecraft's render loop reads that and idles. AWT has no
+     *  GLFW, but Frame.setExtendedState(ICONIFIED) is the standard signal that
+     *  Swing's RepaintManager and Timer machinery honor: paints get coalesced,
+     *  the EDT idles, the JVM stops doing heavy AWT work in the background.
+     *  Run on the EDT so it serializes with whatever paint/event is in flight. */
+    private static void setFrameState(int newState) {
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            for (Frame f : Frame.getFrames()) {
+                if (f == null || !f.isDisplayable()) continue;
+                try {
+                    // Preserve MAXIMIZED_BOTH bits when toggling ICONIFIED.
+                    int cur = f.getExtendedState();
+                    int next;
+                    if (newState == Frame.ICONIFIED) {
+                        next = cur | Frame.ICONIFIED;
+                    } else {
+                        next = cur & ~Frame.ICONIFIED;
+                    }
+                    if (next != cur) {
+                        f.setExtendedState(next);
+                        System.out.println("[WindowMaximizerAgent] frame state '"
+                                + f.getTitle() + "' " + Integer.toHexString(cur)
+                                + " -> " + Integer.toHexString(next));
+                    }
+                } catch (Throwable t) {
+                    System.out.println("[WindowMaximizerAgent] setFrameState failed: " + t);
+                }
+            }
+        });
     }
 
     private static Window pickTargetWindow() {
