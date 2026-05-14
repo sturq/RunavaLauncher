@@ -665,13 +665,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             return;
         }
         sJvmLaunched = true;
-        // Opt out of Pojav's methods_injector_agent. That agent installs a
-        // ClassFileTransformer that fires on every class load to patch LWJGL2
-        // OpenAL methods for Minecraft mod compatibility. We don't use LWJGL2;
-        // for RuneLite it's just useless overhead inside the AWT class-load
-        // path. JREUtils.launchJavaVM checks this property before adding the
-        // -javaagent flag.
-        System.setProperty("pojav.skip.methodsInjector", "1");
         try {
             File latestLogFile = new File(Tools.DIR_GAME_HOME, "latestlog.txt");
             if (!latestLogFile.exists() && !latestLogFile.createNewFile()) {
@@ -707,27 +700,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 //                              correctness bugs live).
                 javaArgList.add("-XX:+UseSerialGC");
                 javaArgList.add("-XX:TieredStopAtLevel=1");
-                // -Xcheck:jni enables strict JNI validation in the JVM. Every JNI
-                // call is checked for correctness — bad jobject refs, dangling
-                // jfieldIDs, cross-thread handle misuse, etc. Catching this in
-                // the act tells us exactly what's corrupting the handle list,
-                // instead of us guessing from disassembly.
-                //
-                // Slows JVM startup noticeably but for debugging the SIGSEGV
-                // on backgrounding it's the right tool. Remove once we've
-                // identified the root cause.
-                javaArgList.add("-Xcheck:jni");
-                // -Xrs: stop the JVM from installing handlers for SIGINT/SIGTERM/SIGHUP.
-                // Android sends those during process lifecycle transitions (backgrounding,
-                // low-memory pressure) and the JVM's default handlers can collide with
-                // Android's, sometimes faulting libjvm during signal dispatch. Telling
-                // the JVM to ignore those signals lets Android's own handlers run cleanly.
-                javaArgList.add("-Xrs");
-                // -XX:-UsePerfData: drop the hsperfdata shared-memory perf counters. They
-                // live in /tmp on most JVMs but Android's tmp policy is weird and the
-                // memory-mapped file gets out of sync during process freezes — eliminating
-                // another moving part during activity lifecycle.
-                javaArgList.add("-XX:-UsePerfData");
                 // Sync-extract the window-maximizer agent into our own files dir so we
                 // never race the async unpackComponents flow.
                 File agentJar = extractAgentJar();
