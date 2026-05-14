@@ -1,10 +1,10 @@
 <h1 align="center">RuneLiteDroid</h1>
 
-<p align="center"><em>RuneLite for Android — the Old School RuneScape client, ported to a phone.</em></p>
+<p align="center"><em>The desktop RuneLite client, running on Android.</em></p>
 
 [![Android CI](https://github.com/sturq/runelitedroid/actions/workflows/android.yml/badge.svg)](https://github.com/sturq/runelitedroid/actions/workflows/android.yml)
 
-RuneLiteDroid is a single-APK port of the desktop [RuneLite](https://runelite.net/) client to Android. It launches the official RuneLite JAR inside a JRE 17 packaged with the app and renders it through a software AWT pipeline (Caciocavallo TTA), so you get the real RuneLite UI, the real plugin set, and the real OSRS client — on your phone, without proot, without X11, without a separate runtime install.
+RuneLiteDroid is a single-APK port of the desktop [RuneLite](https://runelite.net/) client — the open-source third-party Old School RuneScape client — to Android. It launches the upstream RuneLite JAR inside a JRE 17 packaged with the app and renders it through a software AWT pipeline (Caciocavallo TTA), so you get the same RuneLite UI and the same plugin ecosystem you have on desktop, on your phone, without proot, without X11, without a separate runtime install.
 
 Everything is bundled. Install one APK, tap the icon, log into your Jagex account, play.
 
@@ -13,8 +13,8 @@ Everything is bundled. Install one APK, tap the icon, log into your Jagex accoun
 **Playable, with caveats.** What works:
 
 * Launches RuneLite from a fresh install with no extra setup
-* Loads the real OSRS world — login, world hop, chat, walking, combat, etc.
-* RuneLite plugin sidebar (right edge) — same plugins as desktop
+* Connects to OSRS — login, world hop, chat, walking, combat, etc.
+* The full RuneLite plugin sidebar — every plugin desktop has, same versions
 * Touch controls (see below) for camera, taps, right-click, zoom
 * Fullscreen, immersive layout, system gestures excluded from the right-edge UI strip
 
@@ -55,7 +55,7 @@ The launcher is a fork of [PojavLauncher](https://github.com/PojavLauncherTeam/P
 
 What's been added or rewritten for RuneLite:
 
-* `RuneLiteLauncherActivity` — downloads the official RuneLite JAR on first launch, deduplicates entries, caches it, installs JRE 17, fires the game intent
+* `RuneLiteLauncherActivity` — downloads the upstream RuneLite JAR on first launch, deduplicates entries, caches it, installs JRE 17, fires the game intent
 * `RuneLiteGameActivity` — fullscreen game-style host, touch → AWT mouse/key mapping, drawer-based menu, foreground-service keepalive
 * `runelite_window_agent/` — a Java agent loaded into the JVM via `-javaagent`. Force-maximizes the RuneLite JFrame to fill the Cacio screen, and runs a file-based IPC poller so the Android side can post mouse-wheel and right-click events that Cacio's input bridge doesn't handle directly.
 * `app_pojavlauncher/src/main/jni/lib{GL,c,dl,pthread,m,rt,ld}shim/` — empty `.so` files built with the appropriate glibc SONAMEs (`libGL.so.1`, `libc.so.6`, etc.) so RuneLite's GPU-plugin natives don't fail their dynamic-linker NEEDED checks. Symbols come from bionic libc; the shims are just SONAME placeholders.
@@ -64,9 +64,8 @@ The `:runelitegame` Android process is separate from `:launcher` and is kept ali
 
 ## Caveats / unsupported
 
-* **No mods.** This is the official RuneLite JAR — same as desktop. No third-party clients.
 * **No GPU plugin.** Enabling it in RuneLite settings will fail to load `librlawt.so`.
-* **Logged-in Jagex accounts only.** RuneLite has dropped username/password login.
+* **Jagex accounts only.** RuneLite has dropped username/password login.
 
 ## License
 
