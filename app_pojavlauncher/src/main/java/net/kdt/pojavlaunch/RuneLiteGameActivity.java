@@ -2,6 +2,7 @@ package net.kdt.pojavlaunch;
 
 import android.annotation.SuppressLint;
 import android.content.ClipboardManager;
+import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -21,6 +22,7 @@ import android.widget.ImageView;
 import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
+import androidx.core.content.ContextCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 
 import com.kdt.LoggerView;
@@ -30,6 +32,7 @@ import net.kdt.pojavlaunch.customcontrols.keyboard.TouchCharInput;
 import net.kdt.pojavlaunch.multirt.MultiRTUtils;
 import net.kdt.pojavlaunch.multirt.Runtime;
 import net.kdt.pojavlaunch.prefs.LauncherPreferences;
+import net.kdt.pojavlaunch.services.RuneLiteGameService;
 import net.kdt.pojavlaunch.utils.JREUtils;
 import net.kdt.pojavlaunch.utils.MathUtils;
 
@@ -95,11 +98,25 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     /** Pixels of pinch-distance change per scroll-wheel tick. Smaller = faster zoom. */
     private static final float PINCH_PIXELS_PER_TICK = 30f;
 
+    /** Set once we've kicked the JVM launch from onCreate. Activity onCreate can fire
+     *  more than once across the process lifetime if Android restarts the activity
+     *  without killing :runelitegame; the foreground service should keep the JVM up. */
+    private static boolean sJvmLaunched;
+
     @SuppressLint("ClickableViewAccessibility")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         applyFullscreenFlags();
+        // Kick the foreground service first so Android doesn't reap :runelitegame
+        // while we're backgrounded — without this, switching apps for ~10s and
+        // back causes a SIGSEGV in libjvm.so as the JVM dies mid-AWT-dispatch.
+        try {
+            ContextCompat.startForegroundService(this,
+                    new Intent(this, RuneLiteGameService.class));
+        } catch (Throwable t) {
+            Log.w("RuneLiteGame", "could not start RuneLiteGameService", t);
+        }
         // Cacio at 60% — middle ground. 75% had RuneLite's sidebar icons tiny; 50% made
         // them tappable but the OSRS canvas got soft from the upscale. 60% keeps the game
         // sharp-ish while bumping every UI element ~67% larger than 100%.
@@ -427,7 +444,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
      *  check), which is what triggers context menus on Linux/AWT. */
     private void fireRightClick() {
         AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_MASK);
-        Toast.makeText(this, "right-click", Toast.LENGTH_SHORT).show();
     }
 
     /** Append one IPC line for the JVM-side input bridge agent to consume.
@@ -514,9 +530,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             // queue. Negate ticks because AWT wheel convention is +y = scroll down.
             writeInputRequest("WHEEL " + (-ticks));
             mLastPinchDistance += ticks * PINCH_PIXELS_PER_TICK;
-            final int finalTicks = ticks;
-            runOnUiThread(() -> Toast.makeText(this,
-                    "zoom " + (finalTicks > 0 ? "+" : "") + finalTicks, Toast.LENGTH_SHORT).show());
         }
 
         mLastMidX = midX;
@@ -623,6 +636,11 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     }
 
     private void launchRuneLite(String javaArgs) {
+        if (sJvmLaunched) {
+            Log.i("RuneLiteGame", "JVM already launched once in this process — skipping re-launch");
+            return;
+        }
+        sJvmLaunched = true;
         try {
             File latestLogFile = new File(Tools.DIR_GAME_HOME, "latestlog.txt");
             if (!latestLogFile.exists() && !latestLogFile.createNewFile()) {

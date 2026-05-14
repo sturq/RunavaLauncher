@@ -140,6 +140,11 @@
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="This application is intended to run a 3rd-party piece of software which cannot be managed using the activity's saved instance state. This service is used for background persistence of this piece of software."/>
         </service>
+        <service android:name=".services.RuneLiteGameService" android:process=":runelitegame"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the JVM process that hosts the RuneLite client alive while the user has the app in the background, so Android does not reclaim the process and the running game session is preserved."/>
+        </service>
     </application>
     <queries>
         <package android:name="net.kdt.pojavlaunch.ffmpeg"/>

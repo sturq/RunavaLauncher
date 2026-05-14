@@ -1,154 +1,82 @@
-<h1 align="center">Angel Aura Amethyst</h1>
+<h1 align="center">RuneLiteDroid</h1>
 
-<img src="https://github.com/AngelAuraMC/Amethyst-Android/blob/v3_openjdk/app_pojavlauncher/src/main/assets/amethyst.png" align="left" width="130" height="130" alt="Amethyst logo">
+<p align="center"><em>RuneLite for Android — the Old School RuneScape client, ported to a phone.</em></p>
 
-[![Android CI](https://github.com/AngelAuraMC/Amethyst-Android/workflows/Android%20CI/badge.svg)](https://github.com/AngelAuraMC/Amethyst-Android/actions)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/m/AngelAuraMC/Amethyst-Android)](https://github.com/AngelAuraMC/Amethyst-Android/actions)
-[![Crowdin](https://badges.crowdin.net/pojavlauncher/localized.svg)](https://crowdin.com/project/pojavlauncher)
-[![Discord](https://img.shields.io/discord/724163890803638273.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/5ptqkyZxEy)
+[![Android CI](https://github.com/sturq/runelitedroid/actions/workflows/android.yml/badge.svg)](https://github.com/sturq/runelitedroid/actions/workflows/android.yml)
 
-*From [Boardwalk](https://github.com/zhuowei/Boardwalk)'s ashes and [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher)'s ruined reputation, here comes Amethyst!*
+RuneLiteDroid is a single-APK port of the desktop [RuneLite](https://runelite.net/) client to Android. It launches the official RuneLite JAR inside a JRE 17 packaged with the app and renders it through a software AWT pipeline (Caciocavallo TTA), so you get the real RuneLite UI, the real plugin set, and the real OSRS client — on your phone, without proot, without X11, without a separate runtime install.
 
-Amethyst is a launcher that allows you to play Minecraft: Java Edition on your Android and [iOS](https://github.com/AngelAuraMC/Amethyst-iOS) devices.
+Everything is bundled. Install one APK, tap the icon, log into your Jagex account, play.
 
-For more details, check out our [wiki](https://wiki.angelauramc.dev)!
+## Status
 
-## Table of Contents
+**Playable, with caveats.** What works:
 
-* [Introduction](#introduction)
-* [Getting Amethyst](#getting-amethyst)
-* [Building](#building)
-    * [Quick Build (Recommended)](#quick-build-recommended)
-    * [Detailed Build](#detailed-build)
-* [Current Status](#current-status)
-* [Known Issues](#known-issues)
-* [FAQ](#faq)
-* [Contributing](#contributing)
-* [Support](#support)
-* [License](#license)
-* [Credits & Dependencies](#credits--dependencies)
-* [Roadmap](#roadmap)
+* Launches RuneLite from a fresh install with no extra setup
+* Loads the real OSRS world — login, world hop, chat, walking, combat, etc.
+* RuneLite plugin sidebar (right edge) — same plugins as desktop
+* Touch controls (see below) for camera, taps, right-click, zoom
+* Fullscreen, immersive layout, system gestures excluded from the right-edge UI strip
 
-## Introduction
+Known limitations:
 
-* Amethyst is a Minecraft: Java Edition launcher for Android and iOS based on [Boardwalk](https://github.com/zhuowei/Boardwalk) and [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher)
-* This launcher can launch almost all available Minecraft versions ranging from rd-132211 to 1.21 snapshots (including Combat Test versions)
-* Modding via Forge and Fabric are also supported.
-* This repository contains source code for Android. For iOS/iPadOS, check out [Amethyst-iOS](https://github.com/AngelAuraMC/Amethyst-iOS).
+* **Software-rendered.** RuneLite's GPU plugin (`librlawt.so`) needs glibc + X11 + GLX symbols that Android doesn't have. The CPU renderer is what runs. Frame rate is fine on a modern phone, but you won't hit desktop GPU-plugin numbers.
+* **No audio.** No `javax.sound.sampled` provider is bundled. Game and plugin sounds are silent.
+* **Drag-from-background can be slow on the first frame** when Android has trimmed the process. The foreground service should keep this rare.
 
-## Getting Amethyst
+## Touch controls
 
-You can get Amethyst via two methods:
-
-1. **Releases:** Download the latest prebuilt app from [nightly.link](https://nightly.link/AngelAuraMC/Amethyst-Android/workflows/android/v3_openjdk/app-debug%20%28recommended%29.zip) or select an older version from our [automatic builds](https://github.com/AngelAuraMC/Amethyst-Android/actions).
-2. **Build from Source:** Follow the [building instructions](#building) below.
+| Gesture | Action |
+| --- | --- |
+| 1-finger tap | Left click |
+| 1-finger long-press (≥ 200ms, no movement) | Right click (opens OSRS context menu) |
+| 1-finger drag in game world (left ~75% of screen) | Camera rotate (arrow keys) |
+| 1-finger drag on RuneLite UI (right sidebar) | Left button held — for inventory drag, minimap drag, etc. |
+| 2-finger drag | Camera rotate (arrow keys) |
+| 2-finger pinch | Zoom in / out (mouse wheel) |
+| ☰ menu (top-left) | Open the drawer: keyboard, copy/paste, virtual mouse toggle, log viewer, force-close |
 
 ## Building
 
-### Quick Build (Recommended)
+```bash
+./gradlew :app_pojavlauncher:assembleMainDebug
+# APK at: app_pojavlauncher/build/outputs/apk/main/debug/app_pojavlauncher-main-debug.apk
+```
 
-The easiest way to build Amethyst is to use the pre-built JREs provided by our CI.
+GitHub Actions builds a debug APK on every push and on a daily 04:00 UTC cron, available as a workflow artifact. No release builds are signed yet.
 
-1. Clone the repository: `git clone --recursive https://github.com/AngelAuraMC/Amethyst-Android.git`
-2. Build the launcher: `./gradlew :app_pojavlauncher:assembleDebug` (Use `gradlew.bat` on Windows)
+## Architecture
 
-The built APK will be located in `app_pojavlauncher/build/outputs/apk/debug/`.
+The launcher is a fork of [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher) / Amethyst-Android, gutted down to the JVM-hosting path. The PojavLauncher pieces that remain:
 
-### Detailed Build
+* The Termux-built OpenJDK 17 (`aarch64`, embedded as a JRE tar.xz in `assets/components/jre-17/`)
+* Caciocavallo TTA as the AWT toolkit (no X11)
+* The `JREUtils` JNI glue that translates Cacio's AWT frame output into a software-rendered Bitmap on a `SurfaceView`
 
-If you need more control over the build process, follow these steps:
+What's been added or rewritten for RuneLite:
 
-1. **Java Runtime Environment (JRE):** Download the `jre8-pojav` artifact from our [CI auto builds](https://github.com/AngelAuraMC/openjdk-build-multiarch/actions).  This package contains pre-built JREs for all supported architectures.  If you need to build the JRE yourself, follow the instructions in the [android-openjdk-build-multiarch](https://github.com/AngelAuraMC/openjdk-build-multiarch) repository.
+* `RuneLiteLauncherActivity` — downloads the official RuneLite JAR on first launch, deduplicates entries, caches it, installs JRE 17, fires the game intent
+* `RuneLiteGameActivity` — fullscreen game-style host, touch → AWT mouse/key mapping, drawer-based menu, foreground-service keepalive
+* `runelite_window_agent/` — a Java agent loaded into the JVM via `-javaagent`. Force-maximizes the RuneLite JFrame to fill the Cacio screen, and runs a file-based IPC poller so the Android side can post mouse-wheel and right-click events that Cacio's input bridge doesn't handle directly.
+* `app_pojavlauncher/src/main/jni/lib{GL,c,dl,pthread,m,rt,ld}shim/` — empty `.so` files built with the appropriate glibc SONAMEs (`libGL.so.1`, `libc.so.6`, etc.) so RuneLite's GPU-plugin natives don't fail their dynamic-linker NEEDED checks. Symbols come from bionic libc; the shims are just SONAME placeholders.
 
-2. **LWJGL:** The build instructions for the custom LWJGL are available over the [LWJGL repository](https://github.com/AngelAuraMC/lwjgl3).
+The `:runelitegame` Android process is separate from `:launcher` and is kept alive by a foreground service so Android doesn't reap the JVM mid-session.
 
-3. **Language List:** Because languages are auto-added by Crowdin, you need to run the language list generator before building. In the project directory, run:
-   * Linux/macOS:
-     ```bash
-     chmod +x scripts/languagelist_updater.sh
-     bash scripts/languagelist_updater.sh
-     ```
-   * Windows:
-     ```batch
-     scripts\languagelist_updater.bat
-     ```
+## Caveats / unsupported
 
-4. **Build GLFW stub:** `./gradlew :jre_lwjgl3glfw:build`
-
-5. **Build the launcher:** `./gradlew :app_pojavlauncher:assembleDebug` (Replace `gradlew` with `gradlew.bat` on Windows).
-
-## Current Status
-
-* [x] OpenJDK 8 Mobile port: ARM32, ARM64, x86, x86_64
-* [x] OpenJDK 17 Mobile port: ARM32, ARM64, x86, x86_64
-* [x] OpenJDK 21 Mobile port: ARM32, ARM64, x86, x86_64
-* [x] Headless mod installer
-* [x] Mod installer with GUI
-* [x] OpenGL in OpenJDK environment
-* [x] OpenAL (works on most devices)
-* [x] Support for Minecraft 1.12.2 and below
-* [x] Support for Minecraft 1.13 and above
-* [x] Support for Minecraft 1.17 (22w13a) and above
-* [x] Game surface zooming
-* [x] New input pipe rewritten to native code
-* [x] Rewritten entire controls system
-* [ ] More to come!
-
-## Known Issues
-
-See our [issue tracker](https://github.com/AngelAuraMC/Amethyst-Android/issues) for a list of known issues and their current status.
-
-## FAQ
-
-See our [wiki](https://wiki.angelauramc.dev/) for more information.
-
-## Contributing
-
-Contributions are welcome! We welcome any type of contribution, not only code. For example, you can help improve the [wiki](https://github.com/AngelAuraMC/angelauramc.github.io/), contribute to the [translations](https://crowdin.com/project/pojavlauncher), or submit bug reports and feature requests.
-
-Any code change should be submitted as a pull request. The description should explain what the code does and give steps to execute it.
-
-## Support
-
-For support, please join our [Discord server](https://discord.gg/5ptqkyZxEy).
+* **No mods.** This is the official RuneLite JAR — same as desktop. No third-party clients.
+* **No GPU plugin.** Enabling it in RuneLite settings will fail to load `librlawt.so`.
+* **Logged-in Jagex accounts only.** RuneLite has dropped username/password login.
 
 ## License
 
-Amethyst is licensed under [GNU LGPLv3](https://github.com/AngelAuraMC/Amethyst-Android/blob/v3_openjdk/LICENSE).
+This project inherits the GPL-3.0 license from upstream PojavLauncher. The Java agent and Android-specific glue under `runelite_window_agent/` and `app_pojavlauncher/src/main/jni/lib*shim/` are also GPL-3.0. RuneLite itself is BSD-2-Clause and is downloaded at runtime, not bundled.
 
-## Credits & Dependencies
+## Credits
 
-* [Boardwalk](https://github.com/zhuowei/Boardwalk) (JVM Launcher): Unknown License/[Apache License 2.0](https://github.com/zhuowei/Boardwalk/blob/master/LICENSE) or GNU GPLv2.
-* [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher): [GLGPL](https://github.com/PojavLauncherTeam/PojavLauncher/blob/v3_openjdk/LICENSE)
-* Android Support Libraries: [Apache License 2.0](https://android.googlesource.com/platform/prebuilts/maven_repo/android/+/master/NOTICE.txt).
-* [GL4ES](https://github.com/AngelAuraMC/gl4es): [MIT License](https://github.com/ptitSeb/gl4es/blob/master/LICENSE).
-* [MobileGlues](https://github.com/MobileGL-Dev/MobileGlues): [LGPL-2.1 License](https://github.com/MobileGL-Dev/MobileGlues/blob/dev-es/LICENSE).
-* [Krypton Wrapper](https://github.com/BZLZHH/NG-GL4ES): [MIT License](https://github.com/BZLZHH/NG-GL4ES/blob/main/LICENSE)
-* [ANGLE](https://chromium.googlesource.com/angle/angle): [All Rights Reserved](app_pojavlauncher/src/main/assets/licenses/ANGLE_LICENSE).
-* [OpenJDK](https://github.com/AngelAuraMC/openjdk-multiarch-jdk8u): [GNU GPLv2 License](https://openjdk.java.net/legal/gplv2+ce.html).
-* [LWJGL3](https://github.com/AngelAuraMC/lwjgl3): [BSD-3 License](https://github.com/LWJGL/lwjgl3/blob/master/LICENSE.md).
-* [LWJGLX](https://github.com/AngelAuraMC/lwjglx) (LWJGL2 API compatibility layer for LWJGL3): unknown license.
-* [Mesa 3D Graphics Library](https://gitlab.freedesktop.org/mesa/mesa): [MIT License](https://docs.mesa3d.org/license.html).
-* [pro-grade](https://github.com/pro-grade/pro-grade) (Java sandboxing security manager): [Apache License 2.0](https://github.com/pro-grade/pro-grade/blob/master/LICENSE.txt).
-* [bhook](https://github.com/bytedance/bhook) (Used for exit code trapping): [MIT license](https://github.com/bytedance/bhook/blob/main/LICENSE).
-* [libepoxy](https://github.com/anholt/libepoxy): [MIT License](https://github.com/anholt/libepoxy/blob/master/COPYING).
-* [virglrenderer](https://github.com/AngelAuraMC/virglrenderer): [MIT License](https://gitlab.freedesktop.org/virgl/virglrenderer/-/blob/master/COPYING).
-* [OpenAL-Soft](https://github.com/kcat/openal-soft): [GNU GPLv2](app_pojavlauncher/src/main/assets/licenses/OPENAL-SOFT_GPL2)
-  * [oboe](https://github.com/google/oboe): [Apache License 2.0](app_pojavlauncher/src/main/assets/licenses/OBOE_APACHE2).
-  * [pfffft](https://bitbucket.org/jpommier/pffft/src/master/): [ARR](app_pojavlauncher/src/main/assets/licenses/PFFFT_LICENSE)
-* [SDL3](https://github.com/libsdl-org/SDL): [zlib License](https://github.com/libsdl-org/SDL/blob/main/LICENSE.txt)
-* [sdl2-compat](https://github.com/libsdl-org/sdl2-compat): [zlib License](https://github.com/libsdl-org/sdl2-compat/blob/main/LICENSE.txt)
-* Thanks to [MCHeads](https://mc-heads.net) for providing Minecraft avatars.
+* [RuneLite](https://github.com/runelite/runelite) — the actual client
+* [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher) — the JVM-on-Android scaffolding
+* [Amethyst-Android](https://github.com/AngelAuraMC/Amethyst-Android) — the PojavLauncher fork this codebase started from
+* [Caciocavallo](https://github.com/CaciocavalloSilano/caciocavallo) — pure-Java AWT toolkit, no X11 required
 
-## Roadmap
-
-We are currently focusing on:
-
-* Exploring new rendering technologies.
-
-Future plans include:
-
-* Improving stability and performance.
-* Enhancing the mod installation experience.
-
-We welcome community feedback and suggestions for our roadmap.  Please feel free to open a feature request in our [issue tracker](https://github.com/AngelAuraMC/Amethyst-Android/issues).
+Not affiliated with Jagex or the RuneLite project. Use of RuneLite is subject to Jagex's third-party client guidelines.
