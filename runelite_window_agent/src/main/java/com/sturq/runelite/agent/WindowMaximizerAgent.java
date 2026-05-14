@@ -243,6 +243,12 @@ public class WindowMaximizerAgent {
         });
     }
 
+    /** Frames we've sized at least once. Each Frame gets one setBounds; after
+     *  that we leave it alone so RuneLite can grow it for the sidebar without
+     *  starting a tug-of-war. */
+    private static final java.util.Set<Frame> sSized =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
     private static void sweep() {
         Frame[] frames = Frame.getFrames();
         if (frames.length == 0) return;
@@ -253,23 +259,26 @@ public class WindowMaximizerAgent {
             // Frame.getFrames() returns only Frames (Dialog extends Window directly,
             // not Frame), so popups (FatalErrorDialog etc.) are never in this array.
             if (!f.isVisible()) continue;
+            if (sSized.contains(f)) continue;
             try {
                 int curW = f.getWidth();
                 int curH = f.getHeight();
                 int curX = f.getX();
                 int curY = f.getY();
+                // setBounds only — no setExtendedState, no validate. The crash
+                // log is unambiguous: SIGSEGV libjvm.so+0xac44cc fires right
+                // after the agent's setExtendedState(MAXIMIZED_BOTH) call,
+                // which corrupts the JNI handle list inside Cacio's peer.
+                // setBounds is a different code path and doesn't crash.
                 if (curW != screen.width || curH != screen.height || curX != 0 || curY != 0) {
-                    f.setLocation(0, 0);
-                    f.setSize(screen.width, screen.height);
-                    f.setExtendedState(f.getExtendedState() | Frame.MAXIMIZED_BOTH);
-                    f.validate();
-                    System.out.println("[WindowMaximizerAgent] resize '" + f.getTitle()
+                    f.setBounds(0, 0, screen.width, screen.height);
+                    System.out.println("[WindowMaximizerAgent] setBounds '" + f.getTitle()
                             + "' " + curW + "x" + curH + " @ " + curX + "," + curY
-                            + " -> " + screen.width + "x" + screen.height + " @ 0,0"
-                            + " (state=" + Integer.toHexString(f.getExtendedState()) + ")");
+                            + " -> " + screen.width + "x" + screen.height + " @ 0,0");
                 }
+                sSized.add(f);
             } catch (Throwable t) {
-                System.out.println("[WindowMaximizerAgent] resize failed: " + t);
+                System.out.println("[WindowMaximizerAgent] setBounds failed: " + t);
             }
         }
     }
