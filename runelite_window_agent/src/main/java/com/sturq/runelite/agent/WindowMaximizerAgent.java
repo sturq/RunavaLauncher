@@ -137,7 +137,9 @@ public class WindowMaximizerAgent {
             // events while the activity is in the background.
             if (line.equals("ICONIFY")) {
                 setFrameState(Frame.ICONIFIED);
+                suspendAwtThreads();
             } else if (line.equals("DEICONIFY")) {
+                resumeAwtThreads();
                 setFrameState(Frame.NORMAL);
             } else if (isPaused()) {
                 // drop user input
@@ -150,6 +152,65 @@ public class WindowMaximizerAgent {
         } catch (Throwable t) {
             System.out.println("[WindowMaximizerAgent] bad input line '" + line + "': " + t);
         }
+    }
+
+    /** AWT threads we've suspended via Thread.suspend(). Keep references so we
+     *  can Thread.resume() them on the way back. WeakHashMap so they can still
+     *  be GCed if the JVM tears down threads for some reason. */
+    private static final java.util.Set<Thread> sSuspendedThreads =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
+    /** User asked for "freeze the entire state and resume when it's open again."
+     *  Closest we can get without going cross-process: enumerate the JVM's
+     *  threads, pick the AWT ones (EventQueue, Toolkit, AWT-Shutdown, etc.) and
+     *  Thread.suspend() each. Deprecated since forever but it actually works at
+     *  the kernel level — paused threads don't run AWT events, don't paint,
+     *  don't hit the libjvm code path that's been crashing us.
+     *
+     *  Skipped intentionally: any thread we own (WindowMaximizerAgent /
+     *  InputBridgePoller). We need to keep running so we can read DEICONIFY
+     *  and resume the suspended threads when the activity returns. */
+    @SuppressWarnings("deprecation")
+    private static void suspendAwtThreads() {
+        try {
+            for (Thread t : Thread.getAllStackTraces().keySet()) {
+                if (t == null || !t.isAlive()) continue;
+                String name = t.getName();
+                if (name == null) continue;
+                if (!isAwtThread(name)) continue;
+                if (sSuspendedThreads.contains(t)) continue;
+                t.suspend();
+                sSuspendedThreads.add(t);
+                System.out.println("[WindowMaximizerAgent] suspended " + name);
+            }
+        } catch (Throwable t) {
+            System.out.println("[WindowMaximizerAgent] suspendAwtThreads failed: " + t);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void resumeAwtThreads() {
+        try {
+            for (Thread t : new java.util.ArrayList<>(sSuspendedThreads)) {
+                if (t == null) continue;
+                t.resume();
+                System.out.println("[WindowMaximizerAgent] resumed " + t.getName());
+            }
+            sSuspendedThreads.clear();
+        } catch (Throwable t) {
+            System.out.println("[WindowMaximizerAgent] resumeAwtThreads failed: " + t);
+        }
+    }
+
+    /** Conservative allowlist of AWT-related thread names. Anything not in this
+     *  list is not suspended — protects our own poller threads, GC, finalizer,
+     *  Cacio internal threads we don't want to break, etc. */
+    private static boolean isAwtThread(String name) {
+        return name.startsWith("AWT-EventQueue")
+                || name.startsWith("AWT-Shutdown")
+                || name.equals("AWT-XAWT")
+                || name.startsWith("Java2D")
+                || name.startsWith("TimerQueue");
     }
 
     /** Tell every visible Frame whether the OS-level window is minimized. Pojav
