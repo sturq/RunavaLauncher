@@ -107,6 +107,9 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Orientation handled in code so PiP can request UNSPECIFIED freely —
+        // a fixed orientation in the manifest blocks PiP entry on some devices.
+        setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         applyFullscreenFlags();
         // Kick the foreground service first so Android doesn't reap :runelitegame
         // while we're backgrounded — without this, switching apps for ~10s and
@@ -462,20 +465,45 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     @Override
     public void onUserLeaveHint() {
         super.onUserLeaveHint();
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            try {
-                android.app.PictureInPictureParams.Builder b =
-                        new android.app.PictureInPictureParams.Builder();
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                    b.setAutoEnterEnabled(true);
-                }
-                // 16:9-ish ratio to match Cacio's wide layout reasonably.
-                b.setAspectRatio(new android.util.Rational(16, 9));
-                enterPictureInPictureMode(b.build());
-            } catch (Throwable t) {
-                Log.w("RuneLiteGame", "enterPictureInPictureMode failed", t);
-            }
+        tryEnterPip("onUserLeaveHint");
+    }
+
+    private void tryEnterPip(String trigger) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) {
+            System.out.println("[RuneLiteGameActivity] PiP " + trigger + ": SDK<26 skip");
+            return;
         }
+        boolean supported = getPackageManager()
+                .hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE);
+        if (!supported) {
+            System.out.println("[RuneLiteGameActivity] PiP " + trigger + ": device unsupported");
+            return;
+        }
+        try {
+            // Release orientation lock — PiP fails on some devices if the
+            // activity is in a fixed orientation. Restore in onPictureInPictureModeChanged.
+            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+            android.app.PictureInPictureParams.Builder b =
+                    new android.app.PictureInPictureParams.Builder();
+            b.setAspectRatio(new android.util.Rational(16, 9));
+            boolean ok = enterPictureInPictureMode(b.build());
+            System.out.println("[RuneLiteGameActivity] PiP " + trigger
+                    + ": enterPictureInPictureMode -> " + ok);
+        } catch (Throwable t) {
+            System.out.println("[RuneLiteGameActivity] PiP " + trigger + ": EXCEPTION " + t);
+            Log.w("RuneLiteGame", "enterPictureInPictureMode failed", t);
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode,
+                                              android.content.res.Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        if (!isInPictureInPictureMode) {
+            // Exiting PiP — restore landscape lock.
+            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        }
+        System.out.println("[RuneLiteGameActivity] PiP mode changed: inPip=" + isInPictureInPictureMode);
     }
 
     /** Append one IPC line for the JVM-side input bridge agent to consume.
