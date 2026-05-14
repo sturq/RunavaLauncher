@@ -52,7 +52,13 @@ public class WindowMaximizerAgent {
         }, "WindowMaximizerAgent");
         t.setDaemon(true);
         t.start();
-        startInputBridge();
+        // DISABLED: posting MouseWheelEvent/MouseEvent from a daemon thread into
+        // AWT's event queue was correlating with a SIGSEGV in libjvm.so on the
+        // user's device. Until we can run the injection on EDT cleanly without
+        // crashing the JVM, leave the input-bridge file watcher off — falls back
+        // to whatever path Caciocavallo's AWT bridge handles (which for scroll
+        // is none, but at least the JVM stays up).
+        // startInputBridge();
         System.out.println("[WindowMaximizerAgent] poller started");
     }
 
