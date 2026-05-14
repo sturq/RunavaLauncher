@@ -1,8 +1,11 @@
 package com.sturq.runelite.agent;
 
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Frame;
 import java.awt.KeyboardFocusManager;
+import java.awt.Point;
 import java.awt.Toolkit;
 import java.awt.Window;
 import java.awt.event.MouseEvent;
@@ -118,37 +121,76 @@ public class WindowMaximizerAgent {
         return null;
     }
 
+    /** Find the deepest visible Component under the center of the target window.
+     *  Wheel/mouse listeners are attached to specific Components (the OSRS Canvas
+     *  inside RuneLite's JFrame, for example), not to the Window itself, so
+     *  dispatching to the Window is a no-op. */
+    private static Component pickWheelTarget() {
+        Window w = pickTargetWindow();
+        if (w == null) return null;
+        int cx = w.getWidth() / 2, cy = w.getHeight() / 2;
+        if (w instanceof Container) {
+            Component deep = findDeepestAt((Container) w, cx, cy);
+            if (deep != null) return deep;
+        }
+        return w;
+    }
+
+    private static Component findDeepestAt(Container container, int x, int y) {
+        Component direct = container.findComponentAt(x, y);
+        if (direct != null && direct != container) return direct;
+        // Fall back to walking children manually if findComponentAt punted.
+        Component[] kids = container.getComponents();
+        for (Component k : kids) {
+            if (!k.isVisible()) continue;
+            int kx = x - k.getX(), ky = y - k.getY();
+            if (kx < 0 || ky < 0 || kx > k.getWidth() || ky > k.getHeight()) continue;
+            if (k instanceof Container) {
+                Component sub = findDeepestAt((Container) k, kx, ky);
+                if (sub != null) return sub;
+            }
+            return k;
+        }
+        return container;
+    }
+
     private static void postWheel(final int ticks) {
         // Defer to EDT — concurrent AWT mutation from the daemon thread that polls
-        // the file was triggering a SIGSEGV in libjvm.so on the user's device.
+        // the file was triggering a SIGSEGV in libjvm.so previously.
         javax.swing.SwingUtilities.invokeLater(() -> {
-            Window w = pickTargetWindow();
-            if (w == null) return;
-            int x = w.getWidth() / 2, y = w.getHeight() / 2;
+            Component target = pickWheelTarget();
+            if (target == null) return;
+            // Coords are in the target Component's coord space — center it.
+            int x = target.getWidth() / 2, y = target.getHeight() / 2;
             long when = System.currentTimeMillis();
             MouseWheelEvent e = new MouseWheelEvent(
-                    w, MouseEvent.MOUSE_WHEEL, when, 0,
+                    target, MouseEvent.MOUSE_WHEEL, when, 0,
                     x, y, 0, false,
                     MouseWheelEvent.WHEEL_UNIT_SCROLL,
                     Math.abs(ticks), ticks);
-            Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(e);
-            System.out.println("[WindowMaximizerAgent] posted WHEEL " + ticks);
+            // dispatchEvent fires listeners directly on this Component, bypassing
+            // both Cacio's input plumbing and the system event queue. Most
+            // reliable way to land a wheel event on the OSRS canvas.
+            target.dispatchEvent(e);
+            System.out.println("[WindowMaximizerAgent] dispatched WHEEL " + ticks
+                    + " to " + target.getClass().getSimpleName());
         });
     }
 
     private static void postRightClick() {
         javax.swing.SwingUtilities.invokeLater(() -> {
-            Window w = pickTargetWindow();
-            if (w == null) return;
-            int x = w.getWidth() / 2, y = w.getHeight() / 2;
+            Component target = pickWheelTarget();
+            if (target == null) return;
+            int x = target.getWidth() / 2, y = target.getHeight() / 2;
             long when = System.currentTimeMillis();
-            MouseEvent down = new MouseEvent(w, MouseEvent.MOUSE_PRESSED, when, 0,
+            MouseEvent down = new MouseEvent(target, MouseEvent.MOUSE_PRESSED, when, 0,
                     x, y, 1, true, MouseEvent.BUTTON3);
-            MouseEvent up = new MouseEvent(w, MouseEvent.MOUSE_RELEASED, when + 1, 0,
+            MouseEvent up = new MouseEvent(target, MouseEvent.MOUSE_RELEASED, when + 1, 0,
                     x, y, 1, false, MouseEvent.BUTTON3);
-            Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(down);
-            Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(up);
-            System.out.println("[WindowMaximizerAgent] posted RIGHTCLICK");
+            target.dispatchEvent(down);
+            target.dispatchEvent(up);
+            System.out.println("[WindowMaximizerAgent] dispatched RIGHTCLICK to "
+                    + target.getClass().getSimpleName());
         });
     }
 
