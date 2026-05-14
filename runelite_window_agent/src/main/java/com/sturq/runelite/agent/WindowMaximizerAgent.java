@@ -36,31 +36,19 @@ public class WindowMaximizerAgent {
     }
 
     private static void startPoller() {
-        Thread t = new Thread(() -> {
-            // Burn the first 30s aggressively so the first JFrame opens maxed, then stop —
-            // RuneLite's ContainableFrame manages frame size based on its own UI state
-            // (sidebar open/closed etc.). Keep fighting it past initial setup and
-            // every resize churns AWT enough to faceplant libjvm with a SIGSEGV.
-            long deadline = System.currentTimeMillis() + 30_000L;
-            while (System.currentTimeMillis() < deadline) {
-                try {
-                    sweepOnEdt();
-                } catch (Throwable ignored) {
-                    // Don't let the poller die — AWT may still be coming up.
-                }
-                try {
-                    Thread.sleep(500L);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
-            System.out.println("[WindowMaximizerAgent] initial-maximize window closed");
-        }, "WindowMaximizerAgent");
-        t.setDaemon(true);
-        t.start();
+        // NOTE: window-maximize disabled. Five reproducible SIGSEGVs at the same
+        // pc=libjvm.so+0xa14ca0, every one immediately after we called
+        // setExtendedState(MAXIMIZED_BOTH) on the RuneLite JFrame via Cacio's
+        // CacioWindowPeer. Switching GC, dropping C2 JIT, and serializing the
+        // mutations onto the EDT all left the PC offset unchanged — the fault
+        // sits inside one of the Cacio/AWT native peer code paths that
+        // setExtendedState reaches. Leaving the JFrame at its natural 767x528
+        // means a Cacio "desktop" border around the client, but the alternative
+        // is the JVM dying ~2s after init.
+        //
+        // We still ship the input bridge below — that part works.
         startInputBridge();
-        System.out.println("[WindowMaximizerAgent] poller started");
+        System.out.println("[WindowMaximizerAgent] input bridge started (window-maximize disabled)");
     }
 
     /** Hand sweep() off to the EDT. All Frame.setSize / setExtendedState mutations have
