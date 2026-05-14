@@ -671,6 +671,19 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 List<String> argList = new ArrayList<>(Arrays.asList(javaArgs.split(" ")));
                 List<String> javaArgList = new ArrayList<>();
                 Tools.getCacioJavaArgs(javaArgList, runtime.javaVersion == 8, this);
+                // JVM stability mitigations. The bundled OpenJDK-17 build for Android
+                // reproducibly faults at libjvm.so+0xa14ca0 a few seconds into AWT
+                // activity (4 captures, same pc offset, different triggers). Same-offset
+                // crashes in libjvm point at JIT-compiled native code that bugs out under
+                // a specific opt path, or a GC barrier that's mishandling AWT image
+                // buffers. Two mitigations together:
+                //   -XX:+UseSerialGC         — drop G1's concurrent collector so AWT
+                //                              image buffers don't move under us.
+                //   -XX:TieredStopAtLevel=1  — keep C1 (fast simple JIT), disable C2
+                //                              (aggressive optimizer where most JIT
+                //                              correctness bugs live).
+                javaArgList.add("-XX:+UseSerialGC");
+                javaArgList.add("-XX:TieredStopAtLevel=1");
                 // Sync-extract the window-maximizer agent into our own files dir so we
                 // never race the async unpackComponents flow.
                 File agentJar = extractAgentJar();
