@@ -245,8 +245,6 @@ public class WindowMaximizerAgent {
     private static void sweep() {
         Frame[] frames = Frame.getFrames();
         if (frames.length == 0) return;
-        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
-        if (screen == null || screen.width <= 0 || screen.height <= 0) return;
         for (Frame f : frames) {
             if (f == null) continue;
             // Frame.getFrames() returns only Frames (Dialog extends Window directly,
@@ -254,23 +252,23 @@ public class WindowMaximizerAgent {
             if (!f.isVisible()) continue;
             if (sMaximized.contains(f)) continue;
             try {
-                int curW = f.getWidth();
-                int curH = f.getHeight();
                 int curX = f.getX();
                 int curY = f.getY();
-                if (curW != screen.width || curH != screen.height || curX != 0 || curY != 0) {
+                // setLocation only. Don't setSize, don't setExtendedState, don't
+                // validate. RuneLite's ContainableFrame manages its own width as
+                // the sidebar opens/closes — sizing the Frame against it produced
+                // a setBounds tug-of-war that crashed libjvm. Cacio's managed
+                // screen is now generously sized in RuneLiteGameActivity so any
+                // Frame size RuneLite picks fits the paint buffer without OOB.
+                if (curX != 0 || curY != 0) {
                     f.setLocation(0, 0);
-                    f.setSize(screen.width, screen.height);
-                    f.setExtendedState(f.getExtendedState() | Frame.MAXIMIZED_BOTH);
-                    f.validate();
-                    System.out.println("[WindowMaximizerAgent] resize '" + f.getTitle()
-                            + "' " + curW + "x" + curH + " @ " + curX + "," + curY
-                            + " -> " + screen.width + "x" + screen.height + " @ 0,0"
-                            + " (state=" + Integer.toHexString(f.getExtendedState()) + ")");
+                    System.out.println("[WindowMaximizerAgent] move '" + f.getTitle()
+                            + "' @ " + curX + "," + curY + " -> @ 0,0  size="
+                            + f.getWidth() + "x" + f.getHeight());
                 }
                 sMaximized.add(f);
             } catch (Throwable t) {
-                System.out.println("[WindowMaximizerAgent] resize failed: " + t);
+                System.out.println("[WindowMaximizerAgent] move failed: " + t);
             }
         }
     }
