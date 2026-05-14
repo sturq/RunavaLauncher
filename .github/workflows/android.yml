@@ -93,9 +93,23 @@ jobs:
           SHARED_JAR=$CACIO_DIR/cacio-shared-1.18-SNAPSHOT.jar
           TTA_JAR=$CACIO_DIR/cacio-tta-1.18-SNAPSHOT.jar
           OUT=$(mktemp -d)
-          # Compile the patched source with the original cacio jars on the
-          # classpath so all imports resolve.
-          javac -cp "$SHARED_JAR:$TTA_JAR" -d "$OUT" \
+          # Compile the patched source. Cacio uses internal JDK packages
+          # (sun.awt.*, java.awt.peer, sun.java2d.*, sun.font), the same set
+          # we already expose at runtime in JREUtils — pass --add-exports
+          # for each so javac can see them. The original cacio jars are on
+          # the classpath so other cacio types resolve.
+          javac \
+              --add-exports=java.desktop/java.awt.peer=ALL-UNNAMED \
+              --add-exports=java.desktop/sun.awt=ALL-UNNAMED \
+              --add-exports=java.desktop/sun.awt.event=ALL-UNNAMED \
+              --add-exports=java.desktop/sun.awt.image=ALL-UNNAMED \
+              --add-exports=java.desktop/sun.awt.datatransfer=ALL-UNNAMED \
+              --add-exports=java.desktop/sun.font=ALL-UNNAMED \
+              --add-exports=java.desktop/sun.java2d=ALL-UNNAMED \
+              --add-exports=java.desktop/sun.java2d.pipe=ALL-UNNAMED \
+              --add-exports=java.desktop/java.awt.dnd.peer=ALL-UNNAMED \
+              --add-exports=java.base/sun.security.action=ALL-UNNAMED \
+              -cp "$SHARED_JAR:$TTA_JAR" -d "$OUT" \
               cacio_patches/src/com/github/caciocavallosilano/cacio/peer/CacioComponentPeer.java
           ls -la "$OUT/com/github/caciocavallosilano/cacio/peer/"
           # Splice the patched .class back into the shared jar, overwriting
