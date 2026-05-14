@@ -2,7 +2,13 @@ package com.sturq.runelite.agent;
 
 import java.awt.Dimension;
 import java.awt.Frame;
+import java.awt.KeyboardFocusManager;
 import java.awt.Toolkit;
+import java.awt.Window;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseWheelEvent;
+import java.io.File;
+import java.io.RandomAccessFile;
 import java.lang.instrument.Instrumentation;
 
 /**
@@ -46,7 +52,98 @@ public class WindowMaximizerAgent {
         }, "WindowMaximizerAgent");
         t.setDaemon(true);
         t.start();
+        startInputBridge();
         System.out.println("[WindowMaximizerAgent] poller started");
+    }
+
+    /** File-based IPC for input events the Activity can't deliver via the AWT
+     *  bridge (notably mouse wheel — Caciocavallo's CTCAndroidInput doesn't
+     *  handle EVENT_TYPE_SCROLL). Activity writes a line to:
+     *      $user.home/.runelitedroid_input
+     *  Format per line:
+     *      WHEEL <ticks>     -> dispatch MouseWheelEvent with that rotation count
+     *      RIGHTCLICK        -> dispatch right-click at the focused window's center
+     *  Agent polls every 50ms, processes complete lines, truncates. */
+    private static void startInputBridge() {
+        String home = System.getProperty("user.home");
+        if (home == null || home.isEmpty()) {
+            System.out.println("[WindowMaximizerAgent] no user.home, input bridge disabled");
+            return;
+        }
+        final File request = new File(home, ".runelitedroid_input");
+        Thread t = new Thread(() -> {
+            while (true) {
+                try {
+                    if (request.exists() && request.length() > 0) {
+                        String content;
+                        try (RandomAccessFile raf = new RandomAccessFile(request, "rw")) {
+                            byte[] buf = new byte[(int) Math.min(raf.length(), 1024)];
+                            raf.readFully(buf);
+                            raf.setLength(0); // consume by truncating
+                            content = new String(buf).trim();
+                        }
+                        for (String line : content.split("\\n+")) {
+                            handleInputLine(line.trim());
+                        }
+                    }
+                } catch (Throwable ignored) {}
+                try { Thread.sleep(50L); }
+                catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
+            }
+        }, "InputBridgePoller");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private static void handleInputLine(String line) {
+        if (line.isEmpty()) return;
+        try {
+            if (line.startsWith("WHEEL ")) {
+                int ticks = Integer.parseInt(line.substring(6).trim());
+                postWheel(ticks);
+            } else if (line.equals("RIGHTCLICK")) {
+                postRightClick();
+            }
+        } catch (Throwable t) {
+            System.out.println("[WindowMaximizerAgent] bad input line '" + line + "': " + t);
+        }
+    }
+
+    private static Window pickTargetWindow() {
+        Window w = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusedWindow();
+        if (w != null && w.isVisible()) return w;
+        for (Frame f : Frame.getFrames()) {
+            if (f.isVisible()) return f;
+        }
+        return null;
+    }
+
+    private static void postWheel(int ticks) {
+        Window w = pickTargetWindow();
+        if (w == null) return;
+        int x = w.getWidth() / 2, y = w.getHeight() / 2;
+        long when = System.currentTimeMillis();
+        MouseWheelEvent e = new MouseWheelEvent(
+                w, MouseEvent.MOUSE_WHEEL, when, 0,
+                x, y, 0, false,
+                MouseWheelEvent.WHEEL_UNIT_SCROLL,
+                Math.abs(ticks), ticks);
+        Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(e);
+        System.out.println("[WindowMaximizerAgent] posted WHEEL " + ticks + " to " + w.getTitle());
+    }
+
+    private static void postRightClick() {
+        Window w = pickTargetWindow();
+        if (w == null) return;
+        int x = w.getWidth() / 2, y = w.getHeight() / 2;
+        long when = System.currentTimeMillis();
+        MouseEvent down = new MouseEvent(w, MouseEvent.MOUSE_PRESSED, when, 0,
+                x, y, 1, true, MouseEvent.BUTTON3);
+        MouseEvent up = new MouseEvent(w, MouseEvent.MOUSE_RELEASED, when + 1, 0,
+                x, y, 1, false, MouseEvent.BUTTON3);
+        Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(down);
+        Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(up);
+        System.out.println("[WindowMaximizerAgent] posted RIGHTCLICK to " + w.getTitle());
     }
 
     private static void sweep() {

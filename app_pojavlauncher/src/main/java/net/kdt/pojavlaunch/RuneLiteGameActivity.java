@@ -397,12 +397,28 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         return true;
     }
 
-    /** Custom long-press timer — fires unless cancelled by ACTION_UP or finger drift > slop. */
+    /** Custom long-press timer — fires unless cancelled by ACTION_UP or finger drift > slop.
+     *  Sends BUTTON3 via the AWT bridge AND a RIGHTCLICK request through the JVM-side
+     *  input bridge file. Whichever path Cacio honors will produce the menu. */
     private final Runnable mLongPressFire = () -> {
         mLongPressFired = true;
         AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON3_DOWN_MASK);
-        Toast.makeText(this, "right-click", Toast.LENGTH_SHORT).show();
+        writeInputRequest("RIGHTCLICK");
     };
+
+    /** Append one IPC line for the JVM-side input bridge agent to consume.
+     *  External-files dir is shared between our process and the :runelitegame
+     *  JVM process (same UID), and matches the agent's user.home setting. */
+    private void writeInputRequest(String line) {
+        try {
+            File extDir = getExternalFilesDir(null);
+            if (extDir == null) return;
+            File req = new File(extDir, ".runelitedroid_input");
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(req, true)) {
+                fos.write((line + "\n").getBytes());
+            }
+        } catch (Throwable ignored) {}
+    }
 
     /** Same arrow-key direction mapping used by two-finger camera; shared with one-finger
      *  camera drag in the game-world zone. */
@@ -467,14 +483,13 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         float distDelta = distance - mLastPinchDistance;
         if (Math.abs(distDelta) >= PINCH_PIXELS_PER_TICK) {
             int ticks = (int) (distDelta / PINCH_PIXELS_PER_TICK);
-            try {
-                // AWT wheel convention: positive y = scroll down = zoom OUT in OSRS.
-                AWTInputBridge.sendScroll(0, -ticks);
-            } catch (Throwable ignored) {}
+            // Caciocavallo's CTCAndroidInput doesn't handle EVENT_TYPE_SCROLL, so the
+            // AWT-bridge path is a no-op. Instead, write a request line to the
+            // input-bridge file; the window-maximizer agent (which lives inside the
+            // JVM) reads it and posts a MouseWheelEvent directly into AWT's event
+            // queue. Negate ticks because AWT wheel convention is +y = scroll down.
+            writeInputRequest("WHEEL " + (-ticks));
             mLastPinchDistance += ticks * PINCH_PIXELS_PER_TICK;
-            final int finalTicks = ticks;
-            runOnUiThread(() -> Toast.makeText(this,
-                    "zoom " + (finalTicks > 0 ? "+" : "") + finalTicks, Toast.LENGTH_SHORT).show());
         }
 
         mLastMidX = midX;
