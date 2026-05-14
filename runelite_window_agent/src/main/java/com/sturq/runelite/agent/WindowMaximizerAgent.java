@@ -131,119 +131,23 @@ public class WindowMaximizerAgent {
     private static void handleInputLine(String line) {
         if (line.isEmpty()) return;
         try {
-            // Lifecycle commands run regardless of pause state — they're what
-            // takes us into / out of the paused state. User-input commands
-            // (WHEEL, RIGHTCLICK) drop while paused so we don't post AWT
-            // events while the activity is in the background.
-            if (line.equals("ICONIFY")) {
-                setFrameState(Frame.ICONIFIED);
-                suspendAwtThreads();
-            } else if (line.equals("DEICONIFY")) {
-                resumeAwtThreads();
-                setFrameState(Frame.NORMAL);
-            } else if (isPaused()) {
-                // drop user input
-            } else if (line.startsWith("WHEEL ")) {
+            if (isPaused()) return;
+            if (line.startsWith("WHEEL ")) {
                 int ticks = Integer.parseInt(line.substring(6).trim());
                 postWheel(ticks);
             } else if (line.equals("RIGHTCLICK")) {
                 postRightClick();
             }
+            // Lifecycle commands (ICONIFY / DEICONIFY / suspend AWT threads) were
+            // removed: every attempt to signal AWT on activity pause TRIGGERED the
+            // libjvm SIGSEGV we were trying to prevent. The Cacio peer path that
+            // setExtendedState reaches hits a use-after-free in JavaThread. The
+            // safer move is to do nothing on pause — let RuneLite's repaint timer
+            // run, accept Android may freeze the process via its own cached-app
+            // freezer, and rely on auto-restart for the rare crashes that still fire.
         } catch (Throwable t) {
             System.out.println("[WindowMaximizerAgent] bad input line '" + line + "': " + t);
         }
-    }
-
-    /** AWT threads we've suspended via Thread.suspend(). Keep references so we
-     *  can Thread.resume() them on the way back. WeakHashMap so they can still
-     *  be GCed if the JVM tears down threads for some reason. */
-    private static final java.util.Set<Thread> sSuspendedThreads =
-            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
-
-    /** User asked for "freeze the entire state and resume when it's open again."
-     *  Closest we can get without going cross-process: enumerate the JVM's
-     *  threads, pick the AWT ones (EventQueue, Toolkit, AWT-Shutdown, etc.) and
-     *  Thread.suspend() each. Deprecated since forever but it actually works at
-     *  the kernel level — paused threads don't run AWT events, don't paint,
-     *  don't hit the libjvm code path that's been crashing us.
-     *
-     *  Skipped intentionally: any thread we own (WindowMaximizerAgent /
-     *  InputBridgePoller). We need to keep running so we can read DEICONIFY
-     *  and resume the suspended threads when the activity returns. */
-    @SuppressWarnings("deprecation")
-    private static void suspendAwtThreads() {
-        try {
-            for (Thread t : Thread.getAllStackTraces().keySet()) {
-                if (t == null || !t.isAlive()) continue;
-                String name = t.getName();
-                if (name == null) continue;
-                if (!isAwtThread(name)) continue;
-                if (sSuspendedThreads.contains(t)) continue;
-                t.suspend();
-                sSuspendedThreads.add(t);
-                System.out.println("[WindowMaximizerAgent] suspended " + name);
-            }
-        } catch (Throwable t) {
-            System.out.println("[WindowMaximizerAgent] suspendAwtThreads failed: " + t);
-        }
-    }
-
-    @SuppressWarnings("deprecation")
-    private static void resumeAwtThreads() {
-        try {
-            for (Thread t : new java.util.ArrayList<>(sSuspendedThreads)) {
-                if (t == null) continue;
-                t.resume();
-                System.out.println("[WindowMaximizerAgent] resumed " + t.getName());
-            }
-            sSuspendedThreads.clear();
-        } catch (Throwable t) {
-            System.out.println("[WindowMaximizerAgent] resumeAwtThreads failed: " + t);
-        }
-    }
-
-    /** Conservative allowlist of AWT-related thread names. Anything not in this
-     *  list is not suspended — protects our own poller threads, GC, finalizer,
-     *  Cacio internal threads we don't want to break, etc. */
-    private static boolean isAwtThread(String name) {
-        return name.startsWith("AWT-EventQueue")
-                || name.startsWith("AWT-Shutdown")
-                || name.equals("AWT-XAWT")
-                || name.startsWith("Java2D")
-                || name.startsWith("TimerQueue");
-    }
-
-    /** Tell every visible Frame whether the OS-level window is minimized. Pojav
-     *  does the equivalent for GLFW via nativeSetWindowAttrib(VISIBLE, 0/1) on
-     *  pause/resume — Minecraft's render loop reads that and idles. AWT has no
-     *  GLFW, but Frame.setExtendedState(ICONIFIED) is the standard signal that
-     *  Swing's RepaintManager and Timer machinery honor: paints get coalesced,
-     *  the EDT idles, the JVM stops doing heavy AWT work in the background.
-     *  Run on the EDT so it serializes with whatever paint/event is in flight. */
-    private static void setFrameState(int newState) {
-        javax.swing.SwingUtilities.invokeLater(() -> {
-            for (Frame f : Frame.getFrames()) {
-                if (f == null || !f.isDisplayable()) continue;
-                try {
-                    // Preserve MAXIMIZED_BOTH bits when toggling ICONIFIED.
-                    int cur = f.getExtendedState();
-                    int next;
-                    if (newState == Frame.ICONIFIED) {
-                        next = cur | Frame.ICONIFIED;
-                    } else {
-                        next = cur & ~Frame.ICONIFIED;
-                    }
-                    if (next != cur) {
-                        f.setExtendedState(next);
-                        System.out.println("[WindowMaximizerAgent] frame state '"
-                                + f.getTitle() + "' " + Integer.toHexString(cur)
-                                + " -> " + Integer.toHexString(next));
-                    }
-                } catch (Throwable t) {
-                    System.out.println("[WindowMaximizerAgent] setFrameState failed: " + t);
-                }
-            }
-        });
     }
 
     private static Window pickTargetWindow() {

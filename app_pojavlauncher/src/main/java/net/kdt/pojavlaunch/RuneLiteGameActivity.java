@@ -441,13 +441,15 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     @Override
     protected void onPause() {
         super.onPause();
-        // Pojav signals Minecraft via GLFW window attributes on pause/resume
-        // (FOCUSED=0, VISIBLE=0) and Minecraft's render loop reads those and
-        // idles. AWT has no GLFW equivalent — the standard signal is
-        // Frame.setExtendedState(ICONIFIED). Send that to the JVM-side agent
-        // via the existing IPC pipe so Swing's RepaintManager coalesces
-        // paints and the EDT goes mostly idle while we're backgrounded.
-        writeInputRequest("ICONIFY");
+        // Hands off on backgrounding. Every signal we've ever sent to the JVM
+        // on pause (ICONIFY, EDT freezer, Thread.suspend) has TRIGGERED the
+        // very libjvm SIGSEGV we were trying to prevent — Cacio's AWT peer
+        // path hits a use-after-free in JavaThread when we touch frame state
+        // during the activity transition. So: do nothing. The agent's pause
+        // sentinel still goes up so we don't post wheel/click events while
+        // backgrounded, but RuneLite's own repaint timer is left alone. If
+        // the JVM survives Android's natural surface teardown without our
+        // interference, we win.
         setAgentPaused(true);
     }
 
@@ -455,7 +457,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     protected void onResume() {
         super.onResume();
         setAgentPaused(false);
-        writeInputRequest("DEICONIFY");
     }
 
     /** Append one IPC line for the JVM-side input bridge agent to consume.
