@@ -9,8 +9,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.MotionEvent;
-import android.view.Surface;
-import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
@@ -59,8 +57,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private DrawerLayout mDrawer;
     private LoggerView mLogger;
     private final Handler mUiHandler = new Handler(Looper.getMainLooper());
-    private volatile boolean mGlSurfaceReady;
-    private final Object mGlSurfaceReadyLock = new Object();
 
     private boolean mVirtualMouseEnabled;
     private float mLastTouchX, mLastTouchY;
@@ -142,35 +138,17 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         mDrawer = findViewById(R.id.rl_drawer);
         mLogger = findViewById(R.id.rl_logger);
 
-        // AWTCanvasView is a SurfaceView now (was TextureView). For transparency
-        // it reads the TRANSPARENT_BACKGROUND flag in its constructor — flag set
-        // above before setContentView so the view sees it.
-        mGlSurface.getHolder().addCallback(new SurfaceHolder.Callback() {
-            @Override
-            public void surfaceCreated(SurfaceHolder holder) {
-                Surface s = holder.getSurface();
-                System.out.println("[RuneLiteGameActivity] GL surface created: valid=" + (s != null && s.isValid()));
-                try {
-                    JREUtils.setupBridgeWindow(s);
-                    System.out.println("[RuneLiteGameActivity] setupBridgeWindow OK");
-                } catch (Throwable t) {
-                    Log.e("RuneLiteGame", "setupBridgeWindow failed", t);
-                    System.out.println("[RuneLiteGameActivity] setupBridgeWindow FAILED: " + t);
-                }
-                synchronized (mGlSurfaceReadyLock) {
-                    mGlSurfaceReady = true;
-                    mGlSurfaceReadyLock.notifyAll();
-                }
-            }
-            @Override
-            public void surfaceChanged(SurfaceHolder h, int f, int w, int hh) {
-                System.out.println("[RuneLiteGameActivity] GL surface changed: " + w + "x" + hh + " format=" + f);
-            }
-            @Override
-            public void surfaceDestroyed(SurfaceHolder h) {
-                System.out.println("[RuneLiteGameActivity] GL surface destroyed");
-            }
-        });
+        // rl_gl_surface was wired up for the GPU-plugin / hybrid GL plan, then
+        // we abandoned that path (no librlawt.so on Android). The Cacio software
+        // renderer doesn't need a Surface — AWTCanvasView reads the frame buffer
+        // directly via JREUtils.renderAWTScreenFrame(). Keeping the GL surface's
+        // SurfaceHolder.Callback alive caused setupBridgeWindow(Surface) to fire
+        // on every background → resume transition, which calls
+        // ANativeWindow_fromSurface but never releases the previous reference.
+        // That stale window leak is a strong candidate for the libjvm SIGSEGV
+        // we keep hitting when the user switches apps. We just hide the view
+        // entirely and skip the callback registration — Cacio doesn't care.
+        mGlSurface.setVisibility(View.GONE);
 
         MainActivity.GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         mKeyboardInput.setCharacterSender(new AwtCharSender());
@@ -205,17 +183,10 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             applyGestureExclusionRects();
         });
 
-        // Wait for both the AWT canvas to be laid out AND the GL surface to be created
-        // (so setupBridgeWindow has already run by the time RuneLite's GPU plugin asks
-        // GLFW for a context).
-        mCanvas.post(() -> new Thread(() -> {
-            synchronized (mGlSurfaceReadyLock) {
-                while (!mGlSurfaceReady) {
-                    try { mGlSurfaceReadyLock.wait(); } catch (InterruptedException ignored) { return; }
-                }
-            }
-            runOnUiThread(() -> launchRuneLite(getIntent().getStringExtra(EXTRA_JAVA_ARGS)));
-        }, "RuneLiteGLWait").start());
+        // Launch RuneLite once the canvas is laid out. We used to also wait
+        // on the GL surface being ready, but the GL surface is now disabled
+        // (see above), so there's nothing to wait for there.
+        mCanvas.post(() -> launchRuneLite(getIntent().getStringExtra(EXTRA_JAVA_ARGS)));
     }
 
     private void applyFullscreenFlags() {
