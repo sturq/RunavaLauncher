@@ -82,60 +82,7 @@ public class WindowMaximizerAgent {
         t.setDaemon(true);
         t.start();
         startInputBridge();
-        startEdtFreezer();
         System.out.println("[WindowMaximizerAgent] poller started");
-    }
-
-    /** Watches the pause sentinel and FREEZES the AWT event-dispatch thread while
-     *  the activity is backgrounded. Pause sentinel alone wasn't enough — it stops
-     *  OUR daemon threads from poking AWT, but RuneLite's own repaint timer and
-     *  any other AWT callbacks keep running on the EDT, and that's the AWT burst
-     *  that's been crashing libjvm during background.
-     *
-     *  Trick: post a Runnable onto the EDT that grabs a lock and waits on it. The
-     *  EDT processes the Runnable, enters the wait, and blocks — no other events
-     *  on the EDT can be processed until we wake it up. From outside (this
-     *  watcher thread), notify the lock when sentinel disappears. */
-    private static final Object sEdtFreezeLock = new Object();
-    private static volatile boolean sEdtFreezeRequested = false;
-
-    private static void startEdtFreezer() {
-        Thread t = new Thread(() -> {
-            boolean lastPaused = false;
-            while (true) {
-                try {
-                    boolean nowPaused = isPaused();
-                    if (nowPaused && !lastPaused) {
-                        // Activity just went to background — request freeze, then
-                        // post the blocker onto the EDT. invokeLater is non-
-                        // blocking; the Runnable hits the EDT eventually and
-                        // freezes it inside the synchronized wait.
-                        sEdtFreezeRequested = true;
-                        javax.swing.SwingUtilities.invokeLater(() -> {
-                            synchronized (sEdtFreezeLock) {
-                                while (sEdtFreezeRequested) {
-                                    try { sEdtFreezeLock.wait(); }
-                                    catch (InterruptedException ie) { return; }
-                                }
-                            }
-                        });
-                        System.out.println("[WindowMaximizerAgent] EDT freeze requested");
-                    } else if (!nowPaused && lastPaused) {
-                        // Activity returned — release the EDT.
-                        synchronized (sEdtFreezeLock) {
-                            sEdtFreezeRequested = false;
-                            sEdtFreezeLock.notifyAll();
-                        }
-                        System.out.println("[WindowMaximizerAgent] EDT freeze released");
-                    }
-                    lastPaused = nowPaused;
-                } catch (Throwable ignored) {}
-                try { Thread.sleep(200L); }
-                catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
-            }
-        }, "EdtFreezer");
-        t.setDaemon(true);
-        t.start();
     }
 
     /** File-based IPC for input events the Activity can't deliver via the AWT
@@ -286,15 +233,6 @@ public class WindowMaximizerAgent {
         });
     }
 
-    /** Frames we've already maximized at least once. RuneLite's ContainableFrame
-     *  resizes its JFrame on its own (sidebar open/close especially) — if we
-     *  re-maximize on every sweep we get a tug-of-war: agent resizes to 1278x568,
-     *  RuneLite shrinks to 1036x568, agent re-resizes, etc. Five rapid resizes in
-     *  the log right before the JRE 21 SIGSEGV at libjvm.so+0xac44cc. WeakHashMap
-     *  so Frames that get disposed don't leak. */
-    private static final java.util.Set<Frame> sMaximized =
-            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
-
     private static void sweep() {
         Frame[] frames = Frame.getFrames();
         if (frames.length == 0) return;
@@ -305,30 +243,23 @@ public class WindowMaximizerAgent {
             // Frame.getFrames() returns only Frames (Dialog extends Window directly,
             // not Frame), so popups (FatalErrorDialog etc.) are never in this array.
             if (!f.isVisible()) continue;
-            if (sMaximized.contains(f)) continue;
             try {
                 int curW = f.getWidth();
                 int curH = f.getHeight();
                 int curX = f.getX();
                 int curY = f.getY();
-                // Full maximize once, gated by sMaximized so we don't fight
-                // RuneLite's later resizes. Cacio's managed screen is sized
-                // generously in RuneLiteGameActivity, so the first maximize
-                // gives RuneLite enough room that sidebar open/close doesn't
-                // need to grow the Frame further → no OOB write on the peer
-                // paint buffer.
                 if (curW != screen.width || curH != screen.height || curX != 0 || curY != 0) {
                     f.setLocation(0, 0);
                     f.setSize(screen.width, screen.height);
                     f.setExtendedState(f.getExtendedState() | Frame.MAXIMIZED_BOTH);
                     f.validate();
-                    System.out.println("[WindowMaximizerAgent] maximize '" + f.getTitle()
+                    System.out.println("[WindowMaximizerAgent] resize '" + f.getTitle()
                             + "' " + curW + "x" + curH + " @ " + curX + "," + curY
-                            + " -> " + screen.width + "x" + screen.height + " @ 0,0");
+                            + " -> " + screen.width + "x" + screen.height + " @ 0,0"
+                            + " (state=" + Integer.toHexString(f.getExtendedState()) + ")");
                 }
-                sMaximized.add(f);
             } catch (Throwable t) {
-                System.out.println("[WindowMaximizerAgent] maximize failed: " + t);
+                System.out.println("[WindowMaximizerAgent] resize failed: " + t);
             }
         }
     }

@@ -123,20 +123,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
         // Clear any stale pause sentinel from a prior session that exited abnormally.
         setAgentPaused(false);
-        // Cacio managed-screen size has to be at least as wide as RuneLite's MAX
-        // Frame size (which varies as the user opens/closes the plugin sidebar +
-        // chat history etc). Empirical max from logs: 1520x568 with sidebar open.
-        //
-        // If Cacio's screen is smaller than what RuneLite tries to use, Cacio's
-        // native peer paint writes off the end of the managed-screen buffer and
-        // segfaults libjvm (this was the JRE 21 crash trigger after we fixed the
-        // tug-of-war).
-        //
-        // Fix: size Cacio to RuneLite's widest layout plus generous slack on both
-        // dimensions. Phone screen aspect doesn't have to match Cacio's — the
-        // AWTCanvasView SurfaceView just stretches the Cacio bitmap to fill.
-        // 1700x768 fits the 1520x568 Frame with sidebar open, with no clipping.
-        AWTCanvasView.setManagedScreenSize(1700, 768);
+        // Cacio at 60% of device res — middle ground for sharp game canvas + tappable
+        // sidebar icons after --scale 2 enlarges the Swing UI.
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        int sw = Math.max(dm.widthPixels, dm.heightPixels);
+        int sh = Math.min(dm.widthPixels, dm.heightPixels);
+        sw = (sw * 3) / 5;
+        sh = (sh * 3) / 5;
+        AWTCanvasView.setManagedScreenSize(sw, sh);
         AWTCanvasView.HIDE_FPS_OVERLAY = true;
         AWTCanvasView.TRANSPARENT_BACKGROUND = true;
         setContentView(R.layout.activity_runelite_game);
