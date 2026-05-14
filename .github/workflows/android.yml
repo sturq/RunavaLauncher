@@ -15,6 +15,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    # Needed by softprops/action-gh-release to create/update the rolling tag.
+    permissions:
+      contents: write
     env:
       GPLAY_KEYSTORE_PASSWORD: ${{ secrets.GPLAY_KEYSTORE_PASSWORD }}
       CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
@@ -88,3 +91,23 @@ jobs:
         with:
           name: app-debug
           path: out/app-debug.*
+
+      # Rolling "latest" release that always points at the most recent main-branch
+      # build. The tag is deleted + recreated each push so the URL stays stable
+      # (https://github.com/sturq/runelitedroid/releases/latest). Skipped on PRs.
+      - name: Publish rolling release (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "RuneLiteDroid (latest build)"
+          body: |
+            Automatic build from commit ${{ github.sha }} on ${{ github.ref_name }}.
+
+            See [the run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for build details.
+          files: out/app-debug.*
+          prerelease: true
+          make_latest: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
