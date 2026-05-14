@@ -129,7 +129,7 @@ public class WindowMaximizerAgent {
                 MouseWheelEvent.WHEEL_UNIT_SCROLL,
                 Math.abs(ticks), ticks);
         Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(e);
-        System.out.println("[WindowMaximizerAgent] posted WHEEL " + ticks + " to " + w.getTitle());
+        System.out.println("[WindowMaximizerAgent] posted WHEEL " + ticks + " to " + w);
     }
 
     private static void postRightClick() {
@@ -143,7 +143,7 @@ public class WindowMaximizerAgent {
                 x, y, 1, false, MouseEvent.BUTTON3);
         Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(down);
         Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(up);
-        System.out.println("[WindowMaximizerAgent] posted RIGHTCLICK to " + w.getTitle());
+        System.out.println("[WindowMaximizerAgent] posted RIGHTCLICK to " + w);
     }
 
     private static void sweep() {
