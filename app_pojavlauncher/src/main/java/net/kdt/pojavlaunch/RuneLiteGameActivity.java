@@ -665,6 +665,13 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             return;
         }
         sJvmLaunched = true;
+        // Opt out of Pojav's methods_injector_agent. That agent installs a
+        // ClassFileTransformer that fires on every class load to patch LWJGL2
+        // OpenAL methods for Minecraft mod compatibility. We don't use LWJGL2;
+        // for RuneLite it's just useless overhead inside the AWT class-load
+        // path. JREUtils.launchJavaVM checks this property before adding the
+        // -javaagent flag.
+        System.setProperty("pojav.skip.methodsInjector", "1");
         try {
             File latestLogFile = new File(Tools.DIR_GAME_HOME, "latestlog.txt");
             if (!latestLogFile.exists() && !latestLogFile.createNewFile()) {

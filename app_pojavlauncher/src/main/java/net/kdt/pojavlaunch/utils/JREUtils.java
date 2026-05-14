@@ -339,8 +339,12 @@ public class JREUtils {
 
         // Some phones are not using the right number of cores, fix that
         userArgs.add("-XX:ActiveProcessorCount=" + java.lang.Runtime.getRuntime().availableProcessors());
-        // Adds/changes methods for compatibility
-        userArgs.add("-javaagent:"+new File(Tools.DIR_DATA,"methods_injector_agent/methods_injector_agent.jar").getAbsolutePath());
+        // Adds/changes methods for compatibility — Minecraft only, RuneLite doesn't
+        // use LWJGL2 OpenAL or Veil/Imgui. Skip when a launcher sets the opt-out
+        // system property.
+        if (System.getProperty("pojav.skip.methodsInjector") == null) {
+            userArgs.add("-javaagent:"+new File(Tools.DIR_DATA,"methods_injector_agent/methods_injector_agent.jar").getAbsolutePath());
+        }
 
         userArgs.addAll(JVMArgs);
         activity.runOnUiThread(() -> Toast.makeText(activity, activity.getString(R.string.autoram_info_msg,LauncherPreferences.PREF_RAM_ALLOCATION), Toast.LENGTH_SHORT).show());
