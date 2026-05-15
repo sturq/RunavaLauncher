@@ -1,31 +1,16 @@
 package net.kdt.pojavlaunch;
 
-import android.content.Context;
-import android.graphics.Bitmap;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Paint;
-import android.graphics.PixelFormat;
-import android.graphics.PorterDuff;
-import android.text.TextPaint;
-import android.util.AttributeSet;
-import android.view.Surface;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
-import android.view.ViewGroup;
+import android.content.*;
+import android.content.res.*;
+import android.graphics.*;
+import android.text.*;
+import android.util.*;
+import android.view.*;
 
-import java.util.LinkedList;
+import java.util.*;
+import net.kdt.pojavlaunch.utils.*;
 
-import net.kdt.pojavlaunch.utils.JREUtils;
-
-/**
- * SurfaceView-backed AWT canvas. Was a TextureView for years (Pojav's original
- * implementation), but TextureView routes every frame through an extra GPU
- * texture upload + compositor pass. For our software-rendered AWT pipeline that
- * extra upload is wasted CPU/GPU work. SurfaceView gives us a surface
- * SurfaceFlinger composites directly with no per-frame upload.
- */
-public class AWTCanvasView extends SurfaceView implements SurfaceHolder.Callback, Runnable {
+public class AWTCanvasView extends TextureView implements TextureView.SurfaceTextureListener, Runnable {
     public static int AWT_CANVAS_WIDTH = 720;
     public static int AWT_CANVAS_HEIGHT = 600;
 
@@ -33,8 +18,8 @@ public class AWTCanvasView extends SurfaceView implements SurfaceHolder.Callback
     public static boolean HIDE_FPS_OVERLAY = false;
 
     /** When true, clear with transparent instead of opaque black per-frame. Used by the
-     *  hybrid RuneLite activity so any GL surface underneath shows through where Cacio
-     *  doesn't paint pixels. */
+     *  hybrid RuneLite activity so the GL surface underneath shows through where Cacio
+     *  doesn't paint pixels (e.g. the OSRS 3D game canvas area when GPU plugin is on). */
     public static boolean TRANSPARENT_BACKGROUND = false;
 
     /** Set the Cacio managed-screen / bitmap size before this view is constructed.
@@ -46,74 +31,79 @@ public class AWTCanvasView extends SurfaceView implements SurfaceHolder.Callback
             AWT_CANVAS_HEIGHT = h;
         }
     }
-
     private static final int MAX_SIZE = 100;
     private static final double NANOS = 1000000000.0;
-    private static final long FRAME_INTERVAL_NS = 16_666_667L; // 60 Hz
-
-    private volatile boolean mIsDestroyed = false;
+    private boolean mIsDestroyed = false;
     private final TextPaint mFpsPaint;
-    private Thread mRenderThread;
-    private final LinkedList<Long> mTimes = new LinkedList<Long>(){{add(System.nanoTime());}};
 
+    // Temporary count fps https://stackoverflow.com/a/13729241
+    private final LinkedList<Long> mTimes = new LinkedList<Long>(){{add(System.nanoTime());}};
+    
     public AWTCanvasView(Context ctx) {
         this(ctx, null);
     }
-
+    
     public AWTCanvasView(Context ctx, AttributeSet attrs) {
         super(ctx, attrs);
-
+        
         mFpsPaint = new TextPaint();
         mFpsPaint.setColor(Color.WHITE);
         mFpsPaint.setTextSize(20);
 
-        SurfaceHolder h = getHolder();
-        h.addCallback(this);
-        h.setFixedSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
-        // Transparent surface format if requested — surface won't be opaque so the
-        // GL surface underneath (when present) can show through where we paint with
-        // PorterDuff.CLEAR.
-        if (TRANSPARENT_BACKGROUND) {
-            h.setFormat(PixelFormat.TRANSLUCENT);
-            setZOrderMediaOverlay(true);
-        }
+
+        setSurfaceTextureListener(this);
+
         post(this::refreshSize);
     }
 
     @Override
-    public void surfaceCreated(SurfaceHolder holder) {
+    public void onSurfaceTextureAvailable(SurfaceTexture texture, int w, int h) {
+        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
         mIsDestroyed = false;
-        if (mRenderThread != null && mRenderThread.isAlive()) return;
-        mRenderThread = new Thread(this, "AndroidAWTRenderer");
-        mRenderThread.start();
+        new Thread(this, "AndroidAWTRenderer").start();
     }
 
     @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-        // No-op — we drive the surface size via setFixedSize.
+    public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
+        // Return false to KEEP the SurfaceTexture alive across activity
+        // backgrounding. With SurfaceView (our previous setup) the underlying
+        // Surface is destroyed by the Android compositor on every pause and
+        // recreated on resume — that destroy/recreate race is what's been
+        // crashing the JVM. TextureView's SurfaceTexture is owned by the
+        // app, not the compositor, so it stays valid. The render thread does
+        // NOT stop here — it keeps reading frames from the JVM and writing
+        // to the (offscreen but valid) texture. When the activity returns,
+        // the texture is reattached to the compositor and the user sees the
+        // already-current frame instantly. No surface lifecycle event ever
+        // reaches the JVM-side AWT path.
+        return false;
     }
 
     @Override
-    public void surfaceDestroyed(SurfaceHolder holder) {
-        mIsDestroyed = true;
-        Thread t = mRenderThread;
-        if (t != null) {
-            try { t.join(500); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-            mRenderThread = null;
-        }
+    public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int w, int h) {
+        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
     }
+
+    @Override
+    public void onSurfaceTextureUpdated(SurfaceTexture texture) {
+        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+    }
+
+    /** Target frame interval. ~16.67 ms = 60 Hz. The Cacio render → setPixels → drawBitmap
+     *  pipeline is all CPU; running it at 300 FPS like the uncapped loop did wastes ~5x the
+     *  pixel work since the screen only refreshes at 60 Hz anyway. Capping frees that CPU
+     *  budget for the AWT scene paint itself, which is what makes RuneLite feel laggy. */
+    private static final long FRAME_INTERVAL_NS = 16_666_667L;
 
     @Override
     public void run() {
-        SurfaceHolder holder = getHolder();
+        Canvas canvas;
+        Surface surface = new Surface(getSurfaceTexture());
         Bitmap rgbArrayBitmap = Bitmap.createBitmap(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT, Bitmap.Config.ARGB_8888);
         Paint paint = new Paint();
         long nextFrameNs = System.nanoTime();
         try {
-            while (!mIsDestroyed) {
-                Surface surface = holder.getSurface();
-                if (surface == null || !surface.isValid()) break;
-
+            while (!mIsDestroyed && surface.isValid()) {
                 long now = System.nanoTime();
                 long sleepNs = nextFrameNs - now;
                 if (sleepNs > 0) {
@@ -121,59 +111,62 @@ public class AWTCanvasView extends SurfaceView implements SurfaceHolder.Callback
                     catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
                     nextFrameNs += FRAME_INTERVAL_NS;
                 } else if (sleepNs < -FRAME_INTERVAL_NS) {
+                    // We're more than a frame behind — resync rather than try to catch up.
                     nextFrameNs = now + FRAME_INTERVAL_NS;
                 } else {
                     nextFrameNs += FRAME_INTERVAL_NS;
                 }
 
-                Canvas canvas = holder.lockCanvas(null);
-                if (canvas == null) continue;
-                try {
-                    if (TRANSPARENT_BACKGROUND) {
-                        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-                    } else {
-                        canvas.drawRGB(0, 0, 0);
-                    }
-                    int[] rgbArray = JREUtils.renderAWTScreenFrame();
-                    boolean drawing = rgbArray != null;
-                    if (drawing) {
-                        rgbArrayBitmap.setPixels(rgbArray, 0, AWT_CANVAS_WIDTH, 0, 0,
-                                AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
-                        canvas.drawBitmap(rgbArrayBitmap, 0, 0, paint);
-                    }
-                    if (!HIDE_FPS_OVERLAY) {
-                        canvas.drawText("FPS: " + (Math.round(fps() * 10) / 10) + ", drawing=" + drawing,
-                                0, 20, mFpsPaint);
-                    }
-                } finally {
-                    holder.unlockCanvasAndPost(canvas);
+                canvas = surface.lockCanvas(null);
+                if (TRANSPARENT_BACKGROUND) {
+                    canvas.drawColor(android.graphics.Color.TRANSPARENT,
+                            android.graphics.PorterDuff.Mode.CLEAR);
+                } else {
+                    canvas.drawRGB(0, 0, 0);
                 }
+                int[] rgbArray = JREUtils.renderAWTScreenFrame(/* canvas, mWidth, mHeight */);
+                boolean mDrawing = rgbArray != null;
+                if (rgbArray != null) {
+                    canvas.save();
+                    rgbArrayBitmap.setPixels(rgbArray, 0, AWT_CANVAS_WIDTH, 0, 0, AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+                    canvas.drawBitmap(rgbArrayBitmap, 0, 0, paint);
+                    canvas.restore();
+                }
+                if (!HIDE_FPS_OVERLAY) {
+                    canvas.drawText("FPS: " + (Math.round(fps() * 10) / 10) + ", drawing=" + mDrawing, 0, 20, mFpsPaint);
+                }
+                surface.unlockCanvasAndPost(canvas);
             }
         } catch (Throwable throwable) {
             Tools.showError(getContext(), throwable);
         }
         rgbArrayBitmap.recycle();
+        surface.release();
     }
 
+    /** Calculates and returns frames per second */
     private double fps() {
         long lastTime = System.nanoTime();
         double difference = (lastTime - mTimes.getFirst()) / NANOS;
         mTimes.addLast(lastTime);
         int size = mTimes.size();
-        if (size > MAX_SIZE) mTimes.removeFirst();
+        if (size > MAX_SIZE) {
+            mTimes.removeFirst();
+        }
         return difference > 0 ? mTimes.size() / difference : 0.0;
     }
 
-    /** Constrain the view to the surface's aspect ratio. The new RuneLite activity
-     *  overrides this to match_parent so the surface stretches to fill the screen. */
-    private void refreshSize() {
+    /** Make the view fit the proper aspect ratio of the surface */
+    private void refreshSize(){
         ViewGroup.LayoutParams layoutParams = getLayoutParams();
-        if (layoutParams == null) return;
-        if (getHeight() < getWidth()) {
+
+        if(getHeight() < getWidth()){
             layoutParams.width = AWT_CANVAS_WIDTH * getHeight() / AWT_CANVAS_HEIGHT;
-        } else {
+        }else{
             layoutParams.height = AWT_CANVAS_HEIGHT * getWidth() / AWT_CANVAS_WIDTH;
         }
+
         setLayoutParams(layoutParams);
     }
+
 }
