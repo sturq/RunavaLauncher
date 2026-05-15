@@ -76,22 +76,34 @@ jobs:
           rm -f bin-arm.tar.xz bin-x86.tar.xz bin-x86_64.tar.xz
           ls -la
 
-      - name: Build audio bridge jar
+      - name: Build audio classes + merge into cacio-shared jar
         run: |
           # Pure-Java javax.sound.sampled.spi.MixerProvider that routes PCM
           # through Android's OpenSL ES (librldroid_audio.so, built by ndk).
-          # Bundled OpenJDK ships without libjsound so the default mixer
-          # providers fail to load — RuneLite then logs "Audio will be
-          # unavailable". This jar plugs in our provider as a replacement.
+          #
+          # We *merge* the audio classes + META-INF/services entry directly
+          # into cacio-shared-1.18-SNAPSHOT.jar rather than ship a separate
+          # rldroid-audio.jar. The separate jar approach wasn't being picked
+          # up by ServiceLoader despite being in the cacio dir (multiple
+          # debug iterations confirmed). cacio-shared.jar is known-good on
+          # the bootclasspath (we've seen it in the JVM args log), so
+          # putting our SPI entry there gets us discovered through the same
+          # mechanism that finds cacio's own classes.
           set -euo pipefail
           OUT=$(mktemp -d)
-          # Compile against java.desktop (default in JDK 21+).
           javac -d "$OUT" $(find audio_patches/src -name '*.java')
-          # Put the META-INF service registration alongside the classes so
-          # AudioSystem's ServiceLoader call picks up our provider.
+          # Drop the META-INF service registration in the same staging dir
+          # so the merge picks it up.
           cp -r audio_patches/META-INF "$OUT/"
-          (cd "$OUT" && jar cf "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/components/caciocavallo17/rldroid-audio.jar" .)
-          unzip -l app_pojavlauncher/src/main/assets/components/caciocavallo17/rldroid-audio.jar
+          ls -la "$OUT" "$OUT/META-INF/services"
+          # Splice everything into cacio-shared.jar (overwrites if file
+          # already exists from a previous step's patch).
+          (cd "$OUT" && zip -ur \
+              "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/components/caciocavallo17/cacio-shared-1.18-SNAPSHOT.jar" \
+              com META-INF)
+          # Sanity check
+          unzip -l app_pojavlauncher/src/main/assets/components/caciocavallo17/cacio-shared-1.18-SNAPSHOT.jar | \
+              grep -E "(AndroidMixer|MixerProvider)"
 
       - name: Apply Cacio patches
         run: |
