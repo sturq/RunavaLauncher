@@ -223,7 +223,7 @@ public class RuneLiteLauncherActivity extends Activity {
                 conn.setInstanceFollowRedirects(true);
                 conn.setConnectTimeout(30000);
                 conn.setReadTimeout(60000);
-                conn.setRequestProperty("User-Agent", "RuneLiteDroid/1.0");
+                conn.setRequestProperty("User-Agent", "RunavaLauncher/1.0");
                 code = conn.getResponseCode();
                 finalUrl = conn.getURL().toString();
                 ctype = String.valueOf(conn.getContentType());

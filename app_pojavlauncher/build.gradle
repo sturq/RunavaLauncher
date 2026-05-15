@@ -127,8 +127,8 @@ android {
             shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             signingConfig signingConfigs.customDebug
-            resValue "string", "app_name", "RuneLiteDroid (Debug)"
-            resValue "string", "app_short_name", "RuneLiteDroid (Debug)"
+            resValue "string", "app_name", "RunavaLauncher (Debug)"
+            resValue "string", "app_short_name", "RunavaLauncher (Debug)"
             resValue 'string', 'application_package', 'com.sturq.runelitedroid.debug'
             resValue 'string', 'storageProviderAuthorities', 'com.sturq.runelitedroid.scoped.gamefolder.debug'
             resValue 'string', 'shareProviderAuthority', 'com.sturq.runelitedroid.scoped.controlfolder.debug'
@@ -151,8 +151,8 @@ android {
             // defaultConfig already set
             // multiDexEnabled = true
             // debuggable = true
-            resValue "string", "app_name", "RuneLiteDroid"
-            resValue "string", "app_short_name", "RuneLiteDroid"
+            resValue "string", "app_name", "RunavaLauncher"
+            resValue "string", "app_short_name", "RunavaLauncher"
             resValue 'string', 'storageProviderAuthorities', 'com.sturq.runelitedroid.scoped.gamefolder'
             resValue 'string', 'application_package', 'com.sturq.runelitedroid'
         }

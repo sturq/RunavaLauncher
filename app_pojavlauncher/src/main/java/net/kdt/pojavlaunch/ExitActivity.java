@@ -27,7 +27,7 @@ public class ExitActivity extends AppCompatActivity {
             isSignal = extras.getBoolean("isSignal", false);
         }
 
-        // Signal-based exit = JVM crashed (SIGSEGV / SIGABRT). For RuneLiteDroid
+        // Signal-based exit = JVM crashed (SIGSEGV / SIGABRT). For RunavaLauncher
         // we'd rather auto-restart than show a popup — the user is mid-session,
         // the JVM died, restart RuneLite from scratch so they re-connect to OSRS.
         // Takes ~20–30s but is seamless from their perspective.

@@ -40,7 +40,7 @@ public class RuneLiteGameService extends Service {
         try {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
-                    "RuneLiteDroid:JvmKeepAlive");
+                    "RunavaLauncher:JvmKeepAlive");
             mWakeLock.setReferenceCounted(false);
             mWakeLock.acquire();
         } catch (Throwable ignored) {
@@ -72,7 +72,7 @@ public class RuneLiteGameService extends Service {
                 PendingIntent.FLAG_IMMUTABLE);
 
         NotificationCompat.Builder b = new NotificationCompat.Builder(this, "channel_id")
-                .setContentTitle("RuneLiteDroid")
+                .setContentTitle("RunavaLauncher")
                 .setContentText("RuneLite is running")
                 .setContentIntent(contentIntent)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Quit", pendingKillIntent)
