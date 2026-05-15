@@ -33,12 +33,44 @@ public class WindowMaximizerAgent {
 
     public static void premain(String agentArgs, Instrumentation inst) {
         diagCacioDirContents();
+        diagAudioDiscovery();
         startPoller();
     }
 
     public static void agentmain(String agentArgs, Instrumentation inst) {
         diagCacioDirContents();
+        diagAudioDiscovery();
         startPoller();
+    }
+
+    /** Probe whether javax.sound.sampled finds our AndroidMixerProvider via
+     *  ServiceLoader, AND whether the class is even loadable from various
+     *  classloaders. Pinpoints whether the failure is jar-not-on-classpath,
+     *  classpath-without-SPI-discovery, or some other gap. */
+    private static void diagAudioDiscovery() {
+        // 1. Is our class loadable from any classloader?
+        try {
+            Class<?> c = Class.forName("com.sturq.runelitedroid.audio.AndroidMixerProvider");
+            System.out.println("[WindowMaximizerAgent] AndroidMixerProvider loaded via Class.forName: "
+                    + c.getClassLoader());
+        } catch (Throwable t) {
+            System.out.println("[WindowMaximizerAgent] AndroidMixerProvider NOT loadable: " + t);
+        }
+        // 2. What does ServiceLoader actually find for MixerProvider?
+        try {
+            java.util.ServiceLoader<javax.sound.sampled.spi.MixerProvider> sl =
+                    java.util.ServiceLoader.load(javax.sound.sampled.spi.MixerProvider.class);
+            StringBuilder sb = new StringBuilder("[WindowMaximizerAgent] ServiceLoader<MixerProvider> sees:");
+            int n = 0;
+            for (javax.sound.sampled.spi.MixerProvider p : sl) {
+                sb.append("\n  ").append(p.getClass().getName());
+                n++;
+            }
+            if (n == 0) sb.append("\n  (none)");
+            System.out.println(sb);
+        } catch (Throwable t) {
+            System.out.println("[WindowMaximizerAgent] ServiceLoader diag failed: " + t);
+        }
     }
 
     /** Print what's actually in $user.home/caciocavallo17 at JVM startup.
