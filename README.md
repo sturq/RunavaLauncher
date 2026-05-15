@@ -19,7 +19,6 @@ Everything is bundled. Install one APK, tap the icon, log in, play.
 * The full RuneLite plugin sidebar — every plugin desktop has, same versions
 * Touch controls (see below) for camera, taps, right-click, zoom
 * Fullscreen, immersive layout, system gestures excluded from the right-edge UI strip
-* Both landscape and portrait — the activity rotates with the device
 * Survives backgrounding — switch apps, take a call, come back, RuneLite is still there
 
 Known limitations:
