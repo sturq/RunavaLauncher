@@ -1,6 +1,7 @@
 package com.sturq.runelite.audio;
 
 import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Control;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.Line;
@@ -27,12 +28,14 @@ public class RunavaAudioMixer implements Mixer {
             SourceDataLine.class,
             new AudioFormat[]{
                     new AudioFormat(AudioFormat.Encoding.PCM_SIGNED,
-                            AudioFormat.NOT_SPECIFIED, 16, 1, 2,
-                            AudioFormat.NOT_SPECIFIED, false),
+                            AudioSystem.NOT_SPECIFIED, 16, 1, 2,
+                            AudioSystem.NOT_SPECIFIED, false),
                     new AudioFormat(AudioFormat.Encoding.PCM_SIGNED,
-                            AudioFormat.NOT_SPECIFIED, 16, 2, 4,
-                            AudioFormat.NOT_SPECIFIED, false),
-            });
+                            AudioSystem.NOT_SPECIFIED, 16, 2, 4,
+                            AudioSystem.NOT_SPECIFIED, false),
+            },
+            AudioSystem.NOT_SPECIFIED,
+            AudioSystem.NOT_SPECIFIED);
 
     private final Mixer.Info info;
     private final List<LineListener> listeners = new ArrayList<>();
