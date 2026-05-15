@@ -4,7 +4,7 @@
 
 [![Android CI](https://github.com/sturq/runelitedroid/actions/workflows/android.yml/badge.svg)](https://github.com/sturq/runelitedroid/actions/workflows/android.yml)
 
-RuneLiteDroid is a single-APK port of the desktop [RuneLite](https://runelite.net/) client — the open-source third-party Old School RuneScape client — to Android. It launches the upstream RuneLite JAR inside a JRE 17 packaged with the app and renders it through a software AWT pipeline (Caciocavallo TTA), so you get the same RuneLite UI and the same plugin ecosystem you have on desktop, on your phone, without proot, without X11, without a separate runtime install.
+RuneLiteDroid is a single-APK port of the desktop [RuneLite](https://runelite.net/) client — the open-source third-party Old School RuneScape client — to Android. It launches the upstream RuneLite JAR inside a JRE 25 packaged with the app and renders it through a software AWT pipeline (Caciocavallo TTA), so you get the same RuneLite UI and the same plugin ecosystem you have on desktop, on your phone, without proot, without X11, without a separate runtime install.
 
 Everything is bundled. Install one APK, tap the icon, log in, play.
 
@@ -52,13 +52,13 @@ GitHub Actions builds a debug APK on every push and on a daily 04:00 UTC cron, a
 
 The launcher is a fork of [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher) / Amethyst-Android, gutted down to the JVM-hosting path. The PojavLauncher pieces that remain:
 
-* The Termux-built OpenJDK 17 (`aarch64`, embedded as a JRE tar.xz in `assets/components/jre-17/`)
+* FCL-Team's OpenJDK 25 build for Android (`aarch64`, embedded as a JRE tar.xz in `assets/components/jre-25/`). We tried AngelAuraMC's JDK 17 and 21 first — both have a JNI handle-list bug in their `libjvm.so` that's triggered by Cacio's AWT peer calls. FCL-Team is a different OpenJDK port and dodges it.
 * Caciocavallo TTA as the AWT toolkit (no X11)
 * The `JREUtils` JNI glue that translates Cacio's AWT frame output into a software-rendered Bitmap on a `SurfaceView`
 
 What's been added or rewritten for RuneLite:
 
-* `RuneLiteLauncherActivity` — downloads the upstream RuneLite JAR on first launch, deduplicates entries, caches it, installs JRE 17, fires the game intent
+* `RuneLiteLauncherActivity` — downloads the upstream RuneLite JAR on first launch, deduplicates entries, caches it, installs JRE 25, fires the game intent
 * `RuneLiteGameActivity` — fullscreen game-style host, touch → AWT mouse/key mapping, drawer-based menu, foreground-service keepalive
 * `runelite_window_agent/` — a Java agent loaded into the JVM via `-javaagent`. Force-maximizes the RuneLite JFrame to fill the Cacio screen, and runs a file-based IPC poller so the Android side can post mouse-wheel and right-click events that Cacio's input bridge doesn't handle directly.
 * `app_pojavlauncher/src/main/jni/lib{GL,c,dl,pthread,m,rt,ld}shim/` — empty `.so` files built with the appropriate glibc SONAMEs (`libGL.so.1`, `libc.so.6`, etc.) so RuneLite's GPU-plugin natives don't fail their dynamic-linker NEEDED checks. Symbols come from bionic libc; the shims are just SONAME placeholders.
