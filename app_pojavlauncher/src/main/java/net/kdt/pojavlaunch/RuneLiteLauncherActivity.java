@@ -213,12 +213,16 @@ public class RuneLiteLauncherActivity extends Activity {
         byte[] mfBytes = entries.get("META-INF/MANIFEST.MF");
         if (mfBytes != null) {
             String mf = new String(mfBytes, "UTF-8");
-            if (!mf.contains("Class-Path:")) {
-                // Append before final blank line. Manifest entries must end with CRLF.
-                String addition = "Class-Path: rldroid-audio.jar\r\n";
-                mf = mf.replaceAll("(\r?\n)$", addition + "$1");
-                entries.put("META-INF/MANIFEST.MF", mf.getBytes("UTF-8"));
-                diag("dedupeJar: added Class-Path: rldroid-audio.jar to MANIFEST.MF");
+            if (mf.contains("rldroid-audio.jar")) {
+                // already patched
+            } else {
+                // Strip the trailing blank line + any final newlines, append our
+                // Class-Path attribute, restore the required terminating blank line.
+                // Manifest format requires CRLF terminators and a final blank line.
+                String trimmed = mf.replaceAll("\\s+$", "");
+                String patched = trimmed + "\r\nClass-Path: rldroid-audio.jar\r\n\r\n";
+                entries.put("META-INF/MANIFEST.MF", patched.getBytes("UTF-8"));
+                diag("dedupeJar: appended Class-Path: rldroid-audio.jar to MANIFEST.MF");
             }
         }
         try (FileOutputStream fos = new FileOutputStream(dst);
@@ -292,14 +296,21 @@ public class RuneLiteLauncherActivity extends Activity {
                     out.getFD().sync();
                 }
                 diag("downloaded bytes=" + written + " code=" + code + " ctype=" + ctype);
-                File toRename = tmp;
-                if (!isValidJar(tmp)) {
-                    diag("strict ZipFile rejected raw jar — repacking");
-                    dedupeJar(tmp, deduped);
-                    if (!isValidJar(deduped)) throw new RuntimeException("repacked jar still invalid (size=" + deduped.length() + ")");
-                    tmp.delete();
-                    toRename = deduped;
+                // Always run dedupeJar — it also patches MANIFEST.MF to add our
+                // Class-Path: rldroid-audio.jar entry (the manifest patch is
+                // what makes the audio MixerProvider discoverable via the app
+                // classpath at JVM start). If the source jar happens to be
+                // strict-ZipFile-clean already, dedupeJar is also a no-op for
+                // duplicates and just rewrites the same content with the
+                // patched manifest.
+                File toRename;
+                diag("dedupeJar + manifest-patch on downloaded jar");
+                dedupeJar(tmp, deduped);
+                if (!isValidJar(deduped)) {
+                    throw new RuntimeException("repacked jar invalid (size=" + deduped.length() + ")");
                 }
+                tmp.delete();
+                toRename = deduped;
                 jar.delete();
                 if (!toRename.renameTo(jar)) throw new RuntimeException("rename failed");
                 diag("jar ready, path=" + jar.getAbsolutePath() + " size=" + jar.length());
