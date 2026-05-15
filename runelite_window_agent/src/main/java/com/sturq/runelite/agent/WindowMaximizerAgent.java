@@ -32,35 +32,47 @@ import java.lang.instrument.Instrumentation;
 public class WindowMaximizerAgent {
 
     public static void premain(String agentArgs, Instrumentation inst) {
-        diagCacioDirContents();
+        registerAudioProvider(inst);
         startPoller();
     }
 
     public static void agentmain(String agentArgs, Instrumentation inst) {
-        diagCacioDirContents();
+        registerAudioProvider(inst);
         startPoller();
     }
 
-    /** Print what's actually in $user.home/caciocavallo17 at JVM startup.
-     *  rldroid-audio.jar needs to be there for the bootclasspath builder in
-     *  Tools.java to pick it up. We've seen the bootclasspath excluding our
-     *  jar even after a version bump that should trigger re-extraction;
-     *  this confirms whether the file is on-disk or not. */
-    private static void diagCacioDirContents() {
+    /** Force-add rldroid-audio.jar to the system class loader's search path.
+     *  Why this is needed: -Xbootclasspath/a:... gets our SPI jar onto the
+     *  boot classpath, but javax.sound.sampled.AudioSystem's ServiceLoader
+     *  lookup uses the thread context class loader (= app/system class
+     *  loader) by default, and on JDK 25 it doesn't reliably pick up
+     *  bootclasspath META-INF/services entries.
+     *
+     *  Instrumentation.appendToSystemClassLoaderSearch adds the jar
+     *  directly to the system class loader. After this returns, any
+     *  ServiceLoader.load(MixerProvider.class) call finds our provider.
+     *
+     *  Located next to cacio jars in $user.home/caciocavallo17/. */
+    private static void registerAudioProvider(Instrumentation inst) {
         try {
             String home = System.getProperty("user.home");
-            if (home == null) return;
-            File dir = new File(home, "caciocavallo17");
-            File[] entries = dir.listFiles();
-            if (entries == null) {
-                System.out.println("[WindowMaximizerAgent] caciocavallo17 dir missing: " + dir);
+            if (home == null || home.isEmpty()) return;
+            File jar = new File(home, "caciocavallo17/rldroid-audio.jar");
+            if (!jar.exists()) {
+                System.out.println("[WindowMaximizerAgent] audio jar not found at "
+                        + jar.getAbsolutePath() + " — skipping audio registration");
                 return;
             }
-            StringBuilder sb = new StringBuilder("[WindowMaximizerAgent] caciocavallo17 contents:");
-            for (File f : entries) sb.append("\n  ").append(f.getName()).append(" ").append(f.length()).append("b");
-            System.out.println(sb);
+            inst.appendToSystemClassLoaderSearch(new java.util.jar.JarFile(jar));
+            System.out.println("[WindowMaximizerAgent] audio jar appended to system "
+                    + "class loader: " + jar.getAbsolutePath());
+            // Touch the provider class to trigger its static init (it prints a
+            // confirmation line). Use the system class loader explicitly to
+            // make sure the version we just added is the one loaded.
+            ClassLoader sys = ClassLoader.getSystemClassLoader();
+            Class.forName("com.sturq.runelitedroid.audio.AndroidMixerProvider", true, sys);
         } catch (Throwable t) {
-            System.out.println("[WindowMaximizerAgent] cacio listing failed: " + t);
+            System.out.println("[WindowMaximizerAgent] audio register failed: " + t);
         }
     }
 
