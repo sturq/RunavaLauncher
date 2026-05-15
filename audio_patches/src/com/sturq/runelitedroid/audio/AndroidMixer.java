@@ -41,7 +41,7 @@ final class AndroidMixer implements Mixer {
         return new Line.Info[]{
                 new DataLine.Info(SourceDataLine.class,
                         new AudioFormat[]{ANY_PCM},
-                        /*minBufferSize*/ 1, /*maxBufferSize*/ AudioFormat.NOT_SPECIFIED)
+                        /*minBufferSize*/ 1, /*maxBufferSize*/ javax.sound.sampled.AudioSystem.NOT_SPECIFIED)
         };
     }
 
@@ -156,10 +156,10 @@ final class AndroidMixer implements Mixer {
      *  rate/channels/etc means "any value works". */
     private static final AudioFormat ANY_PCM = new AudioFormat(
             AudioFormat.Encoding.PCM_SIGNED,
-            AudioFormat.NOT_SPECIFIED,
-            AudioFormat.NOT_SPECIFIED,
-            AudioFormat.NOT_SPECIFIED,
-            AudioFormat.NOT_SPECIFIED,
-            AudioFormat.NOT_SPECIFIED,
+            javax.sound.sampled.AudioSystem.NOT_SPECIFIED,
+            javax.sound.sampled.AudioSystem.NOT_SPECIFIED,
+            javax.sound.sampled.AudioSystem.NOT_SPECIFIED,
+            javax.sound.sampled.AudioSystem.NOT_SPECIFIED,
+            javax.sound.sampled.AudioSystem.NOT_SPECIFIED,
             false);
 }
