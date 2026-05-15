@@ -81,6 +81,7 @@ public class WindowMaximizerAgent {
         }, "WindowMaximizerAgent");
         t.setDaemon(true);
         t.start();
+        System.out.println("[WindowMaximizerAgent] agent build=audio-probe-v2");
         startInputBridge();
         startStaleRepaintNudger();
         probeAudioSpi();
