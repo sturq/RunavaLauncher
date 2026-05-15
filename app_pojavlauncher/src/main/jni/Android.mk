@@ -50,6 +50,15 @@ LOCAL_SRC_FILES := \
     native_hooks/chmod_hook.c
 include $(BUILD_SHARED_LIBRARY)
 
+# OpenSL ES backend for our javax.sound.sampled MixerProvider. Loaded by
+# AndroidSourceDataLine via System.loadLibrary("rldroid_audio"). Java side
+# of the bridge lives in audio_patches/.
+include $(CLEAR_VARS)
+LOCAL_MODULE := rldroid_audio
+LOCAL_LDLIBS := -lOpenSLES -llog
+LOCAL_SRC_FILES := runeliteaudio/runeliteaudio.c
+include $(BUILD_SHARED_LIBRARY)
+
 #ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
 include $(CLEAR_VARS)
 LOCAL_MODULE := linkerhook

@@ -76,6 +76,23 @@ jobs:
           rm -f bin-arm.tar.xz bin-x86.tar.xz bin-x86_64.tar.xz
           ls -la
 
+      - name: Build audio bridge jar
+        run: |
+          # Pure-Java javax.sound.sampled.spi.MixerProvider that routes PCM
+          # through Android's OpenSL ES (librldroid_audio.so, built by ndk).
+          # Bundled OpenJDK ships without libjsound so the default mixer
+          # providers fail to load — RuneLite then logs "Audio will be
+          # unavailable". This jar plugs in our provider as a replacement.
+          set -euo pipefail
+          OUT=$(mktemp -d)
+          # Compile against java.desktop (default in JDK 21+).
+          javac -d "$OUT" $(find audio_patches/src -name '*.java')
+          # Put the META-INF service registration alongside the classes so
+          # AudioSystem's ServiceLoader call picks up our provider.
+          cp -r audio_patches/META-INF "$OUT/"
+          (cd "$OUT" && jar cf "$GITHUB_WORKSPACE/app_pojavlauncher/src/main/assets/components/caciocavallo17/rldroid-audio.jar" .)
+          unzip -l app_pojavlauncher/src/main/assets/components/caciocavallo17/rldroid-audio.jar
+
       - name: Apply Cacio patches
         run: |
           # Patched CacioComponentPeer.java skips the swingComponent.validate()
