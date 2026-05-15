@@ -76,46 +76,6 @@ jobs:
           rm -f bin-arm.tar.xz bin-x86.tar.xz bin-x86_64.tar.xz
           ls -la
 
-      - name: Apply Cacio patches
-        run: |
-          # Patched CacioComponentPeer.java skips the swingComponent.validate()
-          # call inside setBounds(). That call walks the whole Swing tree and
-          # queues many paint events at once — under OpenJDK 21 for Android,
-          # the JNI handle-list grow code (libjvm.so+0xac44cc) has a UAF that
-          # fires under that allocation burst, which has been the SIGSEGV
-          # we've been chasing.
-          set -euo pipefail
-          CACIO_DIR=app_pojavlauncher/src/main/assets/components/caciocavallo17
-          SHARED_JAR=$CACIO_DIR/cacio-shared-1.18-SNAPSHOT.jar
-          TTA_JAR=$CACIO_DIR/cacio-tta-1.18-SNAPSHOT.jar
-          OUT=$(mktemp -d)
-          # Compile the patched source. Cacio uses internal JDK packages
-          # (sun.awt.*, java.awt.peer, sun.java2d.*, sun.font), the same set
-          # we already expose at runtime in JREUtils — pass --add-exports
-          # for each so javac can see them. The original cacio jars are on
-          # the classpath so other cacio types resolve.
-          javac \
-              --add-exports=java.desktop/java.awt.peer=ALL-UNNAMED \
-              --add-exports=java.desktop/sun.awt=ALL-UNNAMED \
-              --add-exports=java.desktop/sun.awt.event=ALL-UNNAMED \
-              --add-exports=java.desktop/sun.awt.image=ALL-UNNAMED \
-              --add-exports=java.desktop/sun.awt.datatransfer=ALL-UNNAMED \
-              --add-exports=java.desktop/sun.font=ALL-UNNAMED \
-              --add-exports=java.desktop/sun.java2d=ALL-UNNAMED \
-              --add-exports=java.desktop/sun.java2d.pipe=ALL-UNNAMED \
-              --add-exports=java.desktop/java.awt.dnd.peer=ALL-UNNAMED \
-              --add-exports=java.base/sun.security.action=ALL-UNNAMED \
-              -cp "$SHARED_JAR:$TTA_JAR" -d "$OUT" \
-              cacio_patches/src/com/github/caciocavallosilano/cacio/peer/CacioComponentPeer.java
-          ls -la "$OUT/com/github/caciocavallosilano/cacio/peer/"
-          # Splice the patched .class back into the shared jar, overwriting
-          # the original.
-          (cd "$OUT" && zip -u "$GITHUB_WORKSPACE/$SHARED_JAR" \
-              com/github/caciocavallosilano/cacio/peer/CacioComponentPeer.class)
-          unzip -p "$SHARED_JAR" \
-              com/github/caciocavallosilano/cacio/peer/CacioComponentPeer.class \
-              | wc -c
-
       - name: Build Debug .apk
         run: |
           # Build the launcher (debug only — no release keystore in fork)

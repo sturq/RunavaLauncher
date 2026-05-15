@@ -88,62 +88,13 @@ include $(BUILD_SHARED_LIBRARY)
 # delete fake libs after linked
 $(info $(shell (rm $(HERE_PATH)/../jniLibs/*/libawt_headless.so)))
 
-# Shims for rlawt's glibc-style NEEDED entries. Each on-disk file is a regular
-# *.so (Android only packages those) but built with -Wl,-soname,<glibc-name>
-# so the linker matches NEEDED entries by SONAME. Each shim's contents are
-# trivial — Android's bionic libc provides the actual symbols process-wide.
+# NOTE: rlawt SONAME shims (libGL.so.1, libc.so.6, libdl.so.2, etc.) were
+# previously built here to satisfy librlawt.so's NEEDED entries when we
+# attempted to enable RuneLite's GPU plugin. The GPU plugin still won't
+# work on Android (rlawt's actual GL calls go through GLX/X11 which we
+# can't emulate), so the shims accomplished nothing beyond startup cost
+# (seven dlopens + libmobileglues.so pull-in via GLshim's constructor).
+# Removed. Source files in libGLshim/ and libcshim/ are kept on disk in
+# case GPU work resumes — see RuneLiteGameActivity history.
 LOCAL_PATH := $(HERE_PATH)
-
-include $(CLEAR_VARS)
-LOCAL_MODULE := GLshim
-LOCAL_LDLIBS := -ldl -llog
-LOCAL_LDFLAGS += -Wl,-soname,libGL.so.1
-LOCAL_SRC_FILES := libGLshim/libGLshim.c
-include $(BUILD_SHARED_LIBRARY)
-
-include $(CLEAR_VARS)
-LOCAL_MODULE := cshim
-LOCAL_LDLIBS := -llog
-LOCAL_LDFLAGS += -Wl,-soname,libc.so.6
-LOCAL_SRC_FILES := libcshim/libcshim.c
-include $(BUILD_SHARED_LIBRARY)
-
-include $(CLEAR_VARS)
-LOCAL_MODULE := dlshim
-LOCAL_LDLIBS := -llog
-LOCAL_LDFLAGS += -Wl,-soname,libdl.so.2
-LOCAL_SRC_FILES := libcshim/libcshim.c
-include $(BUILD_SHARED_LIBRARY)
-
-include $(CLEAR_VARS)
-LOCAL_MODULE := pthreadshim
-LOCAL_LDLIBS := -llog
-LOCAL_LDFLAGS += -Wl,-soname,libpthread.so.0
-LOCAL_SRC_FILES := libcshim/libcshim.c
-include $(BUILD_SHARED_LIBRARY)
-
-include $(CLEAR_VARS)
-LOCAL_MODULE := mshim
-LOCAL_LDLIBS := -llog
-LOCAL_LDFLAGS += -Wl,-soname,libm.so.6
-LOCAL_SRC_FILES := libcshim/libcshim.c
-include $(BUILD_SHARED_LIBRARY)
-
-include $(CLEAR_VARS)
-LOCAL_MODULE := rtshim
-LOCAL_LDLIBS := -llog
-LOCAL_LDFLAGS += -Wl,-soname,librt.so.1
-LOCAL_SRC_FILES := libcshim/libcshim.c
-include $(BUILD_SHARED_LIBRARY)
-
-# glibc's dynamic linker SONAME — rlawt's ELF references it. Android's linker is
-# /system/bin/linker64 with its own SONAME, so the glibc name goes unresolved.
-ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
-include $(CLEAR_VARS)
-LOCAL_MODULE := ldshim
-LOCAL_LDLIBS := -llog
-LOCAL_LDFLAGS += -Wl,-soname,ld-linux-aarch64.so.1
-LOCAL_SRC_FILES := libcshim/libcshim.c
-include $(BUILD_SHARED_LIBRARY)
-endif
 

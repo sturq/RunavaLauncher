@@ -627,23 +627,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
     }
 
-    /** Pre-load all the SONAME shims for librlawt.so's glibc-style NEEDED entries.
-     *  Each shim has the right SONAME (libGL.so.1, libc.so.6, libdl.so.2, etc.),
-     *  so when the linker resolves rlawt's NEEDED list, it matches our pre-loaded
-     *  shims by SONAME. The actual symbol resolution then comes from bionic libc
-     *  (already in-process) or libmobileglues (loaded by GLshim's constructor). */
-    private void preloadGLShim() {
-        String[] shims = {"GLshim", "cshim", "dlshim", "pthreadshim", "mshim", "rtshim", "ldshim"};
-        for (String name : shims) {
-            try {
-                System.loadLibrary(name);
-                Log.i("RuneLiteGame", name + " preloaded");
-            } catch (Throwable t) {
-                Log.e("RuneLiteGame", name + " preload failed", t);
-            }
-        }
-    }
-
     private File extractAgentJar() {
         File dst = new File(getFilesDir(), "runelite_window_agent.jar");
         try (java.io.InputStream in = getAssets().open("components/runelite_window_agent/runelite_window_agent.jar");
@@ -679,7 +662,10 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             return;
         }
         Runtime runtime = MultiRTUtils.forceReread(LauncherPreferences.PREF_DEFAULT_RUNTIME);
-        preloadGLShim();
+        // Skip Pojav's methods_injector_agent for our launch — it's an LWJGL2
+        // OpenAL compat patcher for Minecraft mods, doesn't apply to RuneLite,
+        // and installs a ClassFileTransformer that runs on every class load.
+        System.setProperty("pojav.skip.methodsInjector", "1");
         new Thread(() -> {
             try {
                 JREUtils.redirectAndPrintJRELog();
