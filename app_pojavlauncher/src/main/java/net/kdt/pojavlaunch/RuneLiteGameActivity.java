@@ -383,6 +383,11 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                             mCameraDragging = true;
                             mLastTouchX = x;
                             mLastTouchY = y;
+                            // Pull AWT focus onto the OSRS Canvas before any arrow
+                            // keys fly. Otherwise the plugin sidebar's search text
+                            // field — auto-focused when the sidebar is open —
+                            // swallows LEFT/RIGHT as cursor movement.
+                            writeInputRequest("FOCUSGAME");
                             updateCameraArrowsFromDelta(x - mDownX, y - mDownY);
                         }
                     }
@@ -521,6 +526,9 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             mLastMidX = midX;
             mLastMidY = midY;
             mLastPinchDistance = distance;
+            // Same reason as one-finger camera: pull focus onto OSRS Canvas so
+            // sidebar text fields don't eat arrow keys mid-rotation.
+            writeInputRequest("FOCUSGAME");
             return;
         }
 

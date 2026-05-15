@@ -166,6 +166,8 @@ public class WindowMaximizerAgent {
                 postWheel(ticks);
             } else if (line.equals("RIGHTCLICK")) {
                 postRightClick();
+            } else if (line.equals("FOCUSGAME")) {
+                focusGameCanvas();
             }
             // Lifecycle commands (ICONIFY / DEICONIFY / suspend AWT threads) were
             // removed: every attempt to signal AWT on activity pause TRIGGERED the
@@ -247,6 +249,38 @@ public class WindowMaximizerAgent {
                 Toolkit.getDefaultToolkit().getSystemEventQueue().postEvent(e);
             } catch (Throwable t) {
                 System.out.println("[WindowMaximizerAgent] postEvent WHEEL failed: " + t);
+            }
+        });
+    }
+
+    /** Walk the focused Window's tree for a java.awt.Canvas — RuneLite uses one
+     *  for the OSRS game viewport — and pull focus onto it. When the plugin
+     *  sidebar is open the search text field auto-focuses; arrow keys from a
+     *  camera drag then go to that text field instead of the canvas, so the
+     *  camera doesn't move. Activity sends FOCUSGAME at the start of each
+     *  camera drag to put focus back on the game. */
+    private static Component findGameCanvas(Container c) {
+        for (Component child : c.getComponents()) {
+            if (!child.isVisible()) continue;
+            if (child instanceof java.awt.Canvas) return child;
+            if (child instanceof Container) {
+                Component found = findGameCanvas((Container) child);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static void focusGameCanvas() {
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            if (isPaused()) return;
+            try {
+                Window w = pickTargetWindow();
+                if (!(w instanceof Container)) return;
+                Component canvas = findGameCanvas((Container) w);
+                if (canvas != null) canvas.requestFocusInWindow();
+            } catch (Throwable t) {
+                System.out.println("[WindowMaximizerAgent] focusGameCanvas failed: " + t);
             }
         });
     }
