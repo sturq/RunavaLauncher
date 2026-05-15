@@ -67,30 +67,17 @@ public class RuneLiteLauncherActivity extends Activity {
         copyRuneLiteLogToDownloads();
         ensureJreAsync(() -> {
             File jar = new File(getFilesDir(), JAR_NAME);
-            if (jar.exists() && jar.length() > 0 && isValidJar(jar) && jarHasAudioClassPath(jar)) {
+            if (jar.exists() && jar.length() > 0 && isValidJar(jar)) {
                 diag("cached jar OK, size=" + jar.length() + " path=" + jar.getAbsolutePath());
                 launchJar(jar);
             } else {
                 if (jar.exists()) {
-                    diag("cached jar needs refresh (missing audio Class-Path), size=" + jar.length());
+                    diag("cached jar invalid, size=" + jar.length() + " — redownloading");
                     jar.delete();
                 }
                 downloadAndLaunch(jar);
             }
         });
-    }
-
-    /** Verify the cached jar's manifest already has our audio Class-Path entry.
-     *  If not, we need to redownload + re-dedup so dedupeJar can patch it in. */
-    private boolean jarHasAudioClassPath(File jar) {
-        try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jar)) {
-            java.util.jar.Manifest mf = jf.getManifest();
-            if (mf == null) return false;
-            String cp = mf.getMainAttributes().getValue("Class-Path");
-            return cp != null && cp.contains("rldroid-audio.jar");
-        } catch (Throwable t) {
-            return false;
-        }
     }
 
     private void ensureJreAsync(Runnable onReady) {
@@ -187,10 +174,7 @@ public class RuneLiteLauncherActivity extends Activity {
     }
 
     /** Re-pack a zip that Android's strict ZipFile won't open (duplicate entries, etc).
-     *  Keeps the LAST occurrence of each entry name — matches OpenJDK's last-wins semantics.
-     *  ALSO patches META-INF/MANIFEST.MF to add `Class-Path: rldroid-audio.jar` so the
-     *  JVM loads our audio MixerProvider on the application classpath alongside the
-     *  RuneLite launcher — bootclasspath/a SPI discovery has been unreliable on JDK 25. */
+     *  Keeps the LAST occurrence of each entry name — matches OpenJDK's last-wins semantics. */
     private void dedupeJar(File src, File dst) throws Exception {
         Map<String, byte[]> entries = new LinkedHashMap<>();
         int dupCount = 0;
@@ -206,21 +190,6 @@ public class RuneLiteLauncherActivity extends Activity {
                 if (entries.put(e.getName(), bos.toByteArray()) != null) dupCount++;
             }
         }
-        // Patch MANIFEST.MF to add a Class-Path entry pointing at our audio jar
-        // (which we copy next to the dst path below). Class-Path: in the manifest
-        // gets honored by `-jar X` JVM mode, adding the listed jars to the
-        // application classpath. ServiceLoader then finds our MixerProvider.
-        byte[] mfBytes = entries.get("META-INF/MANIFEST.MF");
-        if (mfBytes != null) {
-            String mf = new String(mfBytes, "UTF-8");
-            if (!mf.contains("Class-Path:")) {
-                // Append before final blank line. Manifest entries must end with CRLF.
-                String addition = "Class-Path: rldroid-audio.jar\r\n";
-                mf = mf.replaceAll("(\r?\n)$", addition + "$1");
-                entries.put("META-INF/MANIFEST.MF", mf.getBytes("UTF-8"));
-                diag("dedupeJar: added Class-Path: rldroid-audio.jar to MANIFEST.MF");
-            }
-        }
         try (FileOutputStream fos = new FileOutputStream(dst);
              ZipOutputStream zos = new ZipOutputStream(fos)) {
             for (Map.Entry<String, byte[]> e : entries.entrySet()) {
@@ -228,27 +197,6 @@ public class RuneLiteLauncherActivity extends Activity {
                 zos.write(e.getValue());
                 zos.closeEntry();
             }
-        }
-        // Copy the audio jar to the same dir as the dedup'd RuneLite.jar so the
-        // Class-Path: relative reference resolves.
-        try {
-            File audioSrc = new File(Tools.DIR_GAME_HOME, "caciocavallo17/rldroid-audio.jar");
-            File audioDst = new File(dst.getParentFile(), "rldroid-audio.jar");
-            if (audioSrc.exists()) {
-                try (FileInputStream in = new FileInputStream(audioSrc);
-                     FileOutputStream out = new FileOutputStream(audioDst)) {
-                    byte[] buf = new byte[16384];
-                    int n;
-                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-                }
-                diag("copied rldroid-audio.jar -> " + audioDst.getAbsolutePath()
-                        + " (" + audioDst.length() + " bytes)");
-            } else {
-                diag("rldroid-audio.jar not found at " + audioSrc.getAbsolutePath()
-                        + " — Class-Path won't resolve, audio will be unavailable");
-            }
-        } catch (Throwable t) {
-            diag("rldroid-audio.jar copy failed: " + t);
         }
         diag("dedupeJar: entries=" + entries.size() + " duplicatesDropped=" + dupCount
                 + " src=" + src.length() + " dst=" + dst.length());
