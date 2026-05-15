@@ -82,7 +82,36 @@ public class WindowMaximizerAgent {
         t.setDaemon(true);
         t.start();
         startInputBridge();
+        startStaleRepaintNudger();
         System.out.println("[WindowMaximizerAgent] poller started");
+    }
+
+    /** Force a full-frame repaint on every visible JFrame every 100ms. Cacio's
+     *  TTA backend only composites a component's pixels onto the managed-screen
+     *  bitmap when the component reports a dirty region. RuneLite's plugin
+     *  sidebar icons only repaint themselves on state changes — between those,
+     *  their region stays "clean" in Cacio's view and our AWTCanvasView reads
+     *  stale pixels for that area. Result: icons appear to disappear until you
+     *  click and the click handler triggers a repaint.
+     *
+     *  Nudging Frame.repaint() at 10Hz tells Cacio "this whole frame is dirty,"
+     *  forces a recomposite, and our render loop sees fresh pixels. Swing.Timer
+     *  fires on the EDT so the repaint call is on the right thread. */
+    private static void startStaleRepaintNudger() {
+        javax.swing.Timer timer = new javax.swing.Timer(100, e -> {
+            if (isPaused()) return;
+            try {
+                for (Frame f : Frame.getFrames()) {
+                    if (f != null && f.isVisible() && f.isShowing()) {
+                        f.repaint();
+                    }
+                }
+            } catch (Throwable ignored) {}
+        });
+        timer.setRepeats(true);
+        // EDT may not be alive yet when the agent's premain runs — kick it from
+        // SwingUtilities so the Timer is created on a live EventQueue.
+        javax.swing.SwingUtilities.invokeLater(timer::start);
     }
 
     /** File-based IPC for input events the Activity can't deliver via the AWT
