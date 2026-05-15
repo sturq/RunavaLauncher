@@ -16,10 +16,6 @@ import javax.sound.sampled.spi.MixerProvider;
  */
 public class AndroidMixerProvider extends MixerProvider {
 
-    static {
-        System.out.println("[rldroid_audio] AndroidMixerProvider loaded — SPI registration successful");
-    }
-
     private static final Mixer.Info INFO = new AndroidMixerInfo();
 
     @Override
