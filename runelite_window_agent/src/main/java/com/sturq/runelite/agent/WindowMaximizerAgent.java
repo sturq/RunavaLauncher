@@ -32,48 +32,11 @@ import java.lang.instrument.Instrumentation;
 public class WindowMaximizerAgent {
 
     public static void premain(String agentArgs, Instrumentation inst) {
-        registerAudioProvider(inst);
         startPoller();
     }
 
     public static void agentmain(String agentArgs, Instrumentation inst) {
-        registerAudioProvider(inst);
         startPoller();
-    }
-
-    /** Force-add rldroid-audio.jar to the system class loader's search path.
-     *  Why this is needed: -Xbootclasspath/a:... gets our SPI jar onto the
-     *  boot classpath, but javax.sound.sampled.AudioSystem's ServiceLoader
-     *  lookup uses the thread context class loader (= app/system class
-     *  loader) by default, and on JDK 25 it doesn't reliably pick up
-     *  bootclasspath META-INF/services entries.
-     *
-     *  Instrumentation.appendToSystemClassLoaderSearch adds the jar
-     *  directly to the system class loader. After this returns, any
-     *  ServiceLoader.load(MixerProvider.class) call finds our provider.
-     *
-     *  Located next to cacio jars in $user.home/caciocavallo17/. */
-    private static void registerAudioProvider(Instrumentation inst) {
-        try {
-            String home = System.getProperty("user.home");
-            if (home == null || home.isEmpty()) return;
-            File jar = new File(home, "caciocavallo17/rldroid-audio.jar");
-            if (!jar.exists()) {
-                System.out.println("[WindowMaximizerAgent] audio jar not found at "
-                        + jar.getAbsolutePath() + " — skipping audio registration");
-                return;
-            }
-            inst.appendToSystemClassLoaderSearch(new java.util.jar.JarFile(jar));
-            System.out.println("[WindowMaximizerAgent] audio jar appended to system "
-                    + "class loader: " + jar.getAbsolutePath());
-            // Touch the provider class to trigger its static init (it prints a
-            // confirmation line). Use the system class loader explicitly to
-            // make sure the version we just added is the one loaded.
-            ClassLoader sys = ClassLoader.getSystemClassLoader();
-            Class.forName("com.sturq.runelitedroid.audio.AndroidMixerProvider", true, sys);
-        } catch (Throwable t) {
-            System.out.println("[WindowMaximizerAgent] audio register failed: " + t);
-        }
     }
 
     /** Sentinel file the Android activity drops while paused. While present,
