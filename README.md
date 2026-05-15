@@ -12,19 +12,20 @@ Everything is bundled. Install one APK, tap the icon, log in, play.
 
 ## Status
 
-**Playable, with caveats.** What works:
+**Playable.** What works:
 
 * Launches RuneLite from a fresh install with no extra setup
 * Connects to OSRS — login, world hop, chat, walking, combat, etc.
 * The full RuneLite plugin sidebar — every plugin desktop has, same versions
 * Touch controls (see below) for camera, taps, right-click, zoom
 * Fullscreen, immersive layout, system gestures excluded from the right-edge UI strip
+* Both landscape and portrait — the activity rotates with the device
+* Survives backgrounding — switch apps, take a call, come back, RuneLite is still there
 
 Known limitations:
 
 * **Software-rendered.** RuneLite's GPU plugin (`librlawt.so`) needs glibc + X11 + GLX symbols that Android doesn't have. The CPU renderer is what runs. Frame rate is fine on a modern phone, but you won't hit desktop GPU-plugin numbers.
 * **No audio.** No `javax.sound.sampled` provider is bundled. Game and plugin sounds are silent.
-* **Drag-from-background can be slow on the first frame** when Android has trimmed the process. The foreground service should keep this rare.
 
 ## Touch controls
 
