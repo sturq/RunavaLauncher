@@ -5,8 +5,8 @@
 <p align="center"><em>The desktop RuneLite client, running on Android.</em></p>
 
 <p align="center">
-  <a href="https://github.com/sturq/runelitedroid/actions/workflows/android.yml"><img src="https://github.com/sturq/runelitedroid/actions/workflows/android.yml/badge.svg" alt="Android CI"></a>
-  <a href="https://github.com/sturq/runelitedroid/releases/latest"><img src="https://img.shields.io/github/v/release/sturq/runelitedroid?include_prereleases&label=latest%20build" alt="Latest build"></a>
+  <a href="https://github.com/sturq/RunavaLauncher/actions/workflows/android.yml"><img src="https://github.com/sturq/RunavaLauncher/actions/workflows/android.yml/badge.svg" alt="Android CI"></a>
+  <a href="https://github.com/sturq/RunavaLauncher/releases/latest"><img src="https://img.shields.io/github/v/release/sturq/RunavaLauncher?include_prereleases&label=latest%20build" alt="Latest build"></a>
 </p>
 
 RunavaLauncher is a single-APK port of the desktop [RuneLite](https://runelite.net/) client — the open-source third-party Old School RuneScape client — to Android. It launches the upstream RuneLite JAR inside a JRE 25 packaged with the app and renders it through a software AWT pipeline (Caciocavallo TTA), so you get the same RuneLite UI and the same plugin ecosystem you have on desktop, on your phone, without proot, without X11, without a separate runtime install.
@@ -17,7 +17,7 @@ Everything is bundled. Install one APK, tap the icon, log in, play.
 
 ## Install
 
-Grab the latest APK from the [releases page](https://github.com/sturq/runelitedroid/releases/latest) and sideload it. ~125 MB, arm64-v8a only.
+Grab the latest APK from the [releases page](https://github.com/sturq/RunavaLauncher/releases/latest) and sideload it. ~125 MB, arm64-v8a only.
 
 ## Status
 
