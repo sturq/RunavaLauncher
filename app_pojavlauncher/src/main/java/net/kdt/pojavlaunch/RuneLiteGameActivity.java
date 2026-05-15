@@ -649,6 +649,20 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
     }
 
+    private File extractAudioJar() {
+        File dst = new File(getFilesDir(), "runelite_audio.jar");
+        try (java.io.InputStream in = getAssets().open("components/runelite_audio/runelite_audio.jar");
+             java.io.FileOutputStream out = new java.io.FileOutputStream(dst)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            return dst;
+        } catch (Throwable t) {
+            Log.e("RuneLiteGame", "extractAudioJar failed", t);
+            return null;
+        }
+    }
+
     private void launchRuneLite(String javaArgs) {
         if (sJvmLaunched) {
             Log.i("RuneLiteGame", "JVM already launched once in this process — skipping re-launch");
@@ -701,6 +715,19 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                     Log.i("RuneLiteGame", "javaagent=" + agentJar.getAbsolutePath() + " size=" + agentJar.length());
                 } else {
                     Log.w("RuneLiteGame", "window-maximizer agent could not be extracted");
+                }
+                // RunavaAudio SPI provider for javax.sound.sampled. Has to land on
+                // the *bootstrap* class path — that's what makes the AudioSystem
+                // ServiceLoader actually see the MixerProvider on FCL's OpenJDK 25.
+                // Prior attempts to plumb it via system classpath or runtime
+                // Instrumentation.appendToSystemClassLoaderSearch never worked.
+                File audioJar = extractAudioJar();
+                if (audioJar != null) {
+                    javaArgList.add("-Xbootclasspath/a:" + audioJar.getAbsolutePath());
+                    Log.i("RuneLiteGame", "audio bootcp=" + audioJar.getAbsolutePath()
+                            + " size=" + audioJar.length());
+                } else {
+                    Log.w("RuneLiteGame", "audio SPI jar could not be extracted; sound will be silent");
                 }
                 javaArgList.addAll(argList);
                 System.out.println("[RuneLiteGameActivity] launching JVM with args: " + javaArgList);

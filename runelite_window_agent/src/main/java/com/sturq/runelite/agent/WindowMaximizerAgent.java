@@ -83,7 +83,39 @@ public class WindowMaximizerAgent {
         t.start();
         startInputBridge();
         startStaleRepaintNudger();
+        probeAudioSpi();
         System.out.println("[WindowMaximizerAgent] poller started");
+    }
+
+    /** Log every javax.sound.sampled.spi.MixerProvider the JRE can find. If our
+     *  RunavaAudioMixerProvider is in the list, the -Xbootclasspath/a: wiring
+     *  is good and audio should be working. If only the JRE's own stubs
+     *  show up, the SPI scan never saw our jar — that's the layer to fix. */
+    private static void probeAudioSpi() {
+        try {
+            java.util.ServiceLoader<javax.sound.sampled.spi.MixerProvider> loader =
+                    java.util.ServiceLoader.load(javax.sound.sampled.spi.MixerProvider.class);
+            int found = 0;
+            boolean sawRunava = false;
+            for (javax.sound.sampled.spi.MixerProvider p : loader) {
+                found++;
+                String klass = p.getClass().getName();
+                if (klass.contains("Runava")) sawRunava = true;
+                System.out.println("[WindowMaximizerAgent] mixerprovider: " + klass);
+                try {
+                    for (javax.sound.sampled.Mixer.Info info : p.getMixerInfo()) {
+                        System.out.println("[WindowMaximizerAgent]   mixer: " + info.getName()
+                                + " / " + info.getVendor() + " / " + info.getDescription());
+                    }
+                } catch (Throwable t) {
+                    System.out.println("[WindowMaximizerAgent]   getMixerInfo failed: " + t);
+                }
+            }
+            System.out.println("[WindowMaximizerAgent] mixerproviders found=" + found
+                    + " runava=" + sawRunava);
+        } catch (Throwable t) {
+            System.out.println("[WindowMaximizerAgent] audio SPI probe failed: " + t);
+        }
     }
 
     /** Force a full-frame repaint on every visible JFrame every 100ms. Cacio's

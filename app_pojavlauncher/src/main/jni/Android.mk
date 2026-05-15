@@ -64,6 +64,17 @@ LOCAL_SRC_FILES := \
     awt_bridge.c
 include $(BUILD_SHARED_LIBRARY)
 
+# AAudio passthrough for the RunavaAudio javax.sound.sampled MixerProvider.
+# librunava_audio.so is dlopen'd lazily from RunavaSourceDataLine.ensureNative,
+# not as part of the main JVM startup path, so a missing libaaudio.so (e.g.
+# Android < 26) only breaks audio playback, not the rest of the launcher.
+include $(CLEAR_VARS)
+LOCAL_MODULE := runava_audio
+LOCAL_LDLIBS := -llog -ldl
+LOCAL_SRC_FILES := \
+    runava_audio.c
+include $(BUILD_SHARED_LIBRARY)
+
 # Helper to get current thread
 # include $(CLEAR_VARS)
 # LOCAL_MODULE := thread64helper
