@@ -186,15 +186,9 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             }
         });
 
-        // The AWTCanvasView constructor schedules refreshSize() which constrains the canvas
-        // to its 720x600 aspect ratio (Pojav default for the installer surface). For the
-        // game activity we want the canvas to fill the screen — the underlying bitmap is
-        // still 720x600 but TextureView stretches it to whatever dimensions we give the view.
+        // Size the canvas for the current orientation, and re-do it on rotation.
         mCanvas.post(() -> {
-            ViewGroup.LayoutParams lp = mCanvas.getLayoutParams();
-            lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
-            lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
-            mCanvas.setLayoutParams(lp);
+            adjustCanvasForOrientation();
             applyGestureExclusionRects();
         });
 
@@ -202,6 +196,55 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // on the GL surface being ready, but the GL surface is now disabled
         // (see above), so there's nothing to wait for there.
         mCanvas.post(() -> launchRuneLite(getIntent().getStringExtra(EXTRA_JAVA_ARGS)));
+    }
+
+    /**
+     * Cacio's bitmap is always rendered at the landscape aspect we configured
+     * before the JVM started (`-Dcacio.managed.screensize=WxH`) — we can't
+     * change that at runtime. So:
+     *   - Landscape: stretch the canvas to fill the screen (aspect matches,
+     *     looks correct).
+     *   - Portrait: keep the canvas at the landscape aspect ratio, width =
+     *     match_parent, height computed from the aspect. The result is a
+     *     letterboxed view (black bars top/bottom) but the game UI isn't
+     *     squished.
+     */
+    private void adjustCanvasForOrientation() {
+        if (mCanvas == null) return;
+        ViewGroup.LayoutParams lp = mCanvas.getLayoutParams();
+        if (lp == null) return;
+        boolean isLandscape = getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        if (isLandscape) {
+            lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+            lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        } else {
+            // Width fills, height = width * (bitmap_h / bitmap_w) to preserve aspect.
+            View parent = (View) mCanvas.getParent();
+            int parentW = parent != null ? parent.getWidth() : 0;
+            if (parentW <= 0) {
+                parentW = getResources().getDisplayMetrics().widthPixels;
+            }
+            lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+            lp.height = parentW * AWTCanvasView.AWT_CANVAS_HEIGHT
+                    / AWTCanvasView.AWT_CANVAS_WIDTH;
+            // FrameLayout's default gravity is top-left; center vertically so the
+            // letterbox bars are equal on top/bottom.
+            if (lp instanceof android.widget.FrameLayout.LayoutParams) {
+                ((android.widget.FrameLayout.LayoutParams) lp).gravity =
+                        android.view.Gravity.CENTER_VERTICAL;
+            }
+        }
+        mCanvas.setLayoutParams(lp);
+    }
+
+    @Override
+    public void onConfigurationChanged(@androidx.annotation.NonNull
+            android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (mCanvas != null) {
+            mCanvas.post(this::adjustCanvasForOrientation);
+        }
     }
 
     private void applyFullscreenFlags() {
