@@ -145,6 +145,10 @@ jobs:
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
+        # Keep going on storage-quota failures — the rolling release below is
+        # the canonical delivery channel anyway. The artifact is just a
+        # convenience for short-lived per-run downloads.
+        continue-on-error: true
         with:
           name: app-debug
           path: out/app-debug.*
