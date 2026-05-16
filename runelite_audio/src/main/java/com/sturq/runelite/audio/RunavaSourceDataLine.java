@@ -173,6 +173,11 @@ public class RunavaSourceDataLine implements SourceDataLine {
             }
         }, "RunavaAudioDrain");
         drainThread.setDaemon(true);
+        // Run below the EDT so the game's render thread never gets pushed
+        // off-CPU while audio is decoding/writing. The drain only feeds
+        // AAudio; underrunning to silence is fine, dropping frames in the
+        // game viewport is not.
+        drainThread.setPriority(Thread.MIN_PRIORITY);
         drainThread.start();
     }
 
