@@ -59,6 +59,8 @@ static struct {
     aaudio_result_t (*s_close)(AAudioStream *);
     int32_t (*s_getFramesPerBurst)(AAudioStream *);
     int32_t (*s_getBufferCapacityInFrames)(AAudioStream *);
+    int32_t (*s_setBufferSizeInFrames)(AAudioStream *, int32_t);
+    int32_t (*s_getBufferSizeInFrames)(AAudioStream *);
     int64_t (*s_getFramesWritten)(AAudioStream *);
     aaudio_result_t (*s_getTimestamp)(AAudioStream *, int32_t, int64_t *, int64_t *);
     const char *(*convertResultToText)(aaudio_result_t);
@@ -94,6 +96,8 @@ static int aaudio_load(void) {
     LOAD(s_close,                     "AAudioStream_close");
     LOAD(s_getFramesPerBurst,         "AAudioStream_getFramesPerBurst");
     LOAD(s_getBufferCapacityInFrames, "AAudioStream_getBufferCapacityInFrames");
+    LOAD(s_setBufferSizeInFrames,     "AAudioStream_setBufferSizeInFrames");
+    LOAD(s_getBufferSizeInFrames,     "AAudioStream_getBufferSizeInFrames");
     LOAD(s_getFramesWritten,          "AAudioStream_getFramesWritten");
     LOAD(s_getTimestamp,              "AAudioStream_getTimestamp");
     LOAD(convertResultToText,         "AAudio_convertResultToText");
@@ -191,9 +195,13 @@ Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeOpen(
         aa.sb_setFormat(b, AAUDIO_FORMAT_PCM_I16);
         aa.sb_setChannelCount(b, channels);
         aa.sb_setSampleRate(b, sampleRate);
-        if (bufferFrames > 0) {
-            aa.sb_setBufferCapacityInFrames(b, bufferFrames * 2);
-        }
+        // Big capacity so we can grow the runtime buffer up to ~1 second.
+        // Otherwise AAudioStream_write blocks at framesPerBurst granularity
+        // (a few hundred frames = ~10ms each), and RuneLite's audio thread
+        // sits in write 8x longer than the data being queued.
+        int32_t capFrames = sampleRate; // 1 second
+        if (capFrames < bufferFrames * 4) capFrames = bufferFrames * 4;
+        aa.sb_setBufferCapacityInFrames(b, capFrames);
         r = aa.sb_openStream(b, &stream);
         aa.sb_delete(b);
         if (r != AAUDIO_OK || stream == NULL) {
@@ -201,10 +209,17 @@ Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeOpen(
                  aa.convertResultToText ? aa.convertResultToText(r) : "?");
             return 0;
         }
-        LOGI("opened stream %dHz x%d, framesPerBurst=%d, bufferCapFrames=%d",
+        // The actual runtime buffer size starts at framesPerBurst on most
+        // devices; bump it to ~half the capacity so writes drain at realtime
+        // pace, not at burst-granularity pace.
+        int32_t capacity = aa.s_getBufferCapacityInFrames(stream);
+        int32_t targetSize = capacity / 2;
+        if (aa.s_setBufferSizeInFrames) aa.s_setBufferSizeInFrames(stream, targetSize);
+        LOGI("opened stream %dHz x%d, framesPerBurst=%d, bufSize=%d, bufCap=%d",
              sampleRate, channels,
              aa.s_getFramesPerBurst(stream),
-             aa.s_getBufferCapacityInFrames(stream));
+             aa.s_getBufferSizeInFrames ? aa.s_getBufferSizeInFrames(stream) : -1,
+             capacity);
     }
 
     runava_line *line = (runava_line *) calloc(1, sizeof(runava_line));
