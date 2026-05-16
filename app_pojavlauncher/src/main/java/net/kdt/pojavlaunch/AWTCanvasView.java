@@ -67,7 +67,9 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
     @Override
     public void onSurfaceTextureAvailable(SurfaceTexture texture, int w, int h) {
-        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+        getSurfaceTexture().setDefaultBufferSize(
+                Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH),
+                Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT));
         mIsDestroyed = false;
         new Thread(this, "AndroidAWTRenderer").start();
     }
@@ -90,12 +92,16 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
     @Override
     public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int w, int h) {
-        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+        getSurfaceTexture().setDefaultBufferSize(
+                Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH),
+                Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT));
     }
 
     @Override
     public void onSurfaceTextureUpdated(SurfaceTexture texture) {
-        getSurfaceTexture().setDefaultBufferSize(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
+        getSurfaceTexture().setDefaultBufferSize(
+                Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH),
+                Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT));
     }
 
     /** Target frame interval. ~16.67 ms = 60 Hz. The Cacio render → setPixels → drawBitmap
@@ -126,6 +132,12 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                     nextFrameNs += FRAME_INTERVAL_NS;
                 }
 
+                // Keep the surface buffer sized to the current visible region.
+                // On orientation change AWT_VISIBLE_* changes, and the next
+                // frame here picks it up so the buffer matches before we draw.
+                getSurfaceTexture().setDefaultBufferSize(
+                        Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH),
+                        Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT));
                 canvas = surface.lockCanvas(null);
                 if (TRANSPARENT_BACKGROUND) {
                     canvas.drawColor(android.graphics.Color.TRANSPARENT,
@@ -140,12 +152,14 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                     int vh = Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT);
                     canvas.save();
                     rgbArrayBitmap.setPixels(rgbArray, 0, AWT_CANVAS_WIDTH, 0, 0, vw, vh);
-                    // Only blit the visible top-left rectangle. The rest of
-                    // the square Cacio canvas isn't displayed in this
-                    // orientation, so we don't pay to copy it.
+                    // Draw the visible region to fill the surface buffer 1:1.
+                    // Surface buffer size matches the visible region (set in
+                    // onSurfaceTextureAvailable / onSurfaceTextureSizeChanged),
+                    // and the TextureView scales the whole buffer to the view's
+                    // aspect-fit dimensions. Using view coords here would leave
+                    // most of the buffer empty.
                     android.graphics.Rect src = new android.graphics.Rect(0, 0, vw, vh);
-                    android.graphics.Rect dst = new android.graphics.Rect(
-                            0, 0, getWidth(), getHeight());
+                    android.graphics.Rect dst = new android.graphics.Rect(0, 0, vw, vh);
                     canvas.drawBitmap(rgbArrayBitmap, src, dst, paint);
                     canvas.restore();
                 }
