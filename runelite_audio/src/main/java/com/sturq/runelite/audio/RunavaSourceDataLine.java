@@ -8,7 +8,9 @@ import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.Line;
 import javax.sound.sampled.SourceDataLine;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -97,6 +99,17 @@ public class RunavaSourceDataLine implements SourceDataLine {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final List<LineListener> listeners = new ArrayList<>();
 
+    // Write decoupling: write() copies into the queue and returns in
+    // microseconds; the drain thread takes bytes off the queue and feeds
+    // them to AAudio via the blocking native write. The game/EDT thread
+    // never sits inside AAudioStream_write — that's what was making music
+    // playback feel like lag.
+    private final Deque<byte[]> writeQueue = new ArrayDeque<>();
+    private int writeQueueBytes;
+    private int writeQueueCap; // soft cap in bytes (~1.5s of audio)
+    private final Object queueLock = new Object();
+    private Thread drainThread;
+
     RunavaSourceDataLine(RunavaAudioMixer mixer, AudioFormat preferredFormat) {
         this.mixer = mixer;
         this.format = preferredFormat;
@@ -125,11 +138,42 @@ public class RunavaSourceDataLine implements SourceDataLine {
         this.handle = h;
         this.format = format;
         this.bufferSize = frames * frameBytes;
+        // 1.5 seconds of audio as the soft cap on the queue. Beyond this,
+        // write() blocks waiting for the drain thread to catch up.
+        this.writeQueueCap = (int) (format.getSampleRate() * frameBytes * 3 / 2);
         open.set(true);
+        startDrainThread();
         mixer.fire(LineEvent.Type.OPEN, this, 0);
         System.out.println("[runava-audio] line opened "
                 + format.getSampleRate() + "Hz x" + channels + " buf=" + frames
                 + " frames in " + openMs + "ms");
+    }
+
+    private void startDrainThread() {
+        drainThread = new Thread(() -> {
+            while (open.get()) {
+                byte[] chunk;
+                synchronized (queueLock) {
+                    while (open.get() && writeQueue.isEmpty()) {
+                        try { queueLock.wait(); }
+                        catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                    }
+                    if (!open.get()) return;
+                    chunk = writeQueue.pollFirst();
+                    if (chunk != null) writeQueueBytes -= chunk.length;
+                    queueLock.notifyAll();
+                }
+                if (chunk == null) continue;
+                try {
+                    nativeWrite(handle, chunk, 0, chunk.length);
+                } catch (Throwable ignored) {}
+            }
+        }, "RunavaAudioDrain");
+        drainThread.setDaemon(true);
+        drainThread.start();
     }
 
     @Override
@@ -143,18 +187,27 @@ public class RunavaSourceDataLine implements SourceDataLine {
 
     @Override
     public int write(byte[] b, int off, int len) {
-        if (!open.get()) return 0;
-        long t0 = System.nanoTime();
-        int n = nativeWrite(handle, b, off, len);
-        long writeMs = (System.nanoTime() - t0) / 1_000_000L;
+        if (!open.get() || len <= 0) return 0;
+        byte[] copy = new byte[len];
+        System.arraycopy(b, off, copy, 0, len);
+        synchronized (queueLock) {
+            while (open.get() && writeQueueBytes + len > writeQueueCap) {
+                try { queueLock.wait(); }
+                catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return 0;
+                }
+            }
+            if (!open.get()) return 0;
+            writeQueue.addLast(copy);
+            writeQueueBytes += len;
+            queueLock.notifyAll();
+        }
         if (!firstWriteLogged) {
             firstWriteLogged = true;
-            System.out.println("[runava-audio] first write " + n + " bytes in " + writeMs + "ms");
-        } else if (writeMs > 20) {
-            // Only log slow writes after the first one to avoid spam.
-            System.out.println("[runava-audio] slow write " + n + " bytes in " + writeMs + "ms");
+            System.out.println("[runava-audio] first write queued " + len + " bytes");
         }
-        return n;
+        return len;
     }
 
     private volatile boolean firstWriteLogged;
@@ -231,6 +284,16 @@ public class RunavaSourceDataLine implements SourceDataLine {
     public void close() {
         if (!open.compareAndSet(true, false)) return;
         running.set(false);
+        // Wake the drain thread so it sees open=false and exits.
+        synchronized (queueLock) {
+            writeQueue.clear();
+            writeQueueBytes = 0;
+            queueLock.notifyAll();
+        }
+        if (drainThread != null) {
+            try { drainThread.join(200); } catch (InterruptedException ignored) {}
+            drainThread = null;
+        }
         try { nativeClose(handle); } catch (Throwable ignored) {}
         handle = 0L;
         mixer.fire(LineEvent.Type.CLOSE, this, 0);
