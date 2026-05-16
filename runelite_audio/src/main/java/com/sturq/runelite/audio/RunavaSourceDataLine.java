@@ -106,8 +106,10 @@ public class RunavaSourceDataLine implements SourceDataLine {
             throw new LineUnavailableException("Only mono/stereo, got " + channels);
         }
         int frameBytes = channels * 2;
-        // ~2 seconds of input audio in the ring buffer.
-        int ringCapFrames = (int) format.getSampleRate() * 2;
+        // ~250ms of input audio. Big enough that the pump thread always has
+        // something to mix (no underruns under normal scheduling), small
+        // enough that play-after-write latency stays well under 300ms.
+        int ringCapFrames = (int) format.getSampleRate() / 4;
         this.ringCap = ringCapFrames * frameBytes;
         this.ring = new byte[ringCap];
         this.writePos = 0;

@@ -19,7 +19,7 @@ public final class GlobalAudioPump {
     static final int SAMPLE_RATE = 22050;
     static final int CHANNELS = 2;
     static final int FRAME_BYTES = CHANNELS * 2; // 16-bit
-    private static final int CHUNK_FRAMES = 512; // ~23ms at 22050Hz
+    private static final int CHUNK_FRAMES = 256; // ~12ms at 22050Hz
     private static final int CHUNK_BYTES = CHUNK_FRAMES * FRAME_BYTES;
     private static final int CHUNK_SAMPLES = CHUNK_FRAMES * CHANNELS;
 

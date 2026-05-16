@@ -346,7 +346,10 @@ Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeOpenShared(
     aa.sb_setFormat(b, AAUDIO_FORMAT_PCM_I16);
     aa.sb_setChannelCount(b, channels);
     aa.sb_setSampleRate(b, sampleRate);
-    aa.sb_setBufferCapacityInFrames(b, sampleRate); // ~1 second
+    // ~200ms capacity, ~100ms runtime — small enough that the play-after-
+    // trigger latency is well under a typical OSRS reaction window, big
+    // enough to absorb pump-thread scheduling jitter (we're MIN_PRIORITY).
+    aa.sb_setBufferCapacityInFrames(b, sampleRate / 5);
     AAudioStream *stream = NULL;
     r = aa.sb_openStream(b, &stream);
     aa.sb_delete(b);
