@@ -171,7 +171,11 @@ Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeOpen(
         }
         aa.sb_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
         aa.sb_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
-        aa.sb_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+        // LOW_LATENCY tripped a libaaudio UBSan add-overflow on Pixel 8 Pro
+        // (Android 16) the moment the first write hit. Revert to NONE; audio
+        // works, latency is somewhat higher. Caching across reopens already
+        // takes the worst of the lag away.
+        aa.sb_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_NONE);
         aa.sb_setFormat(b, AAUDIO_FORMAT_PCM_I16);
         aa.sb_setChannelCount(b, channels);
         aa.sb_setSampleRate(b, sampleRate);
@@ -218,7 +222,12 @@ Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeWrite(
     jbyte *data = (*env)->GetByteArrayElements(env, buf, NULL);
     if (data == NULL) return 0;
     int32_t frames = len / frameBytes;
-    aaudio_result_t r = aa.s_write(line->stream, data + offset, frames, INT64_MAX);
+    // 10s timeout, NOT INT64_MAX. AAudio adds the timeout to the monotonic
+    // clock to get an absolute deadline; INT64_MAX + anything overflows and
+    // UBSan traps on Android 16 (crashes the JVM). 10s is plenty for a single
+    // write — the buffer's whole capacity drains in tens of ms.
+    aaudio_result_t r = aa.s_write(line->stream, data + offset, frames,
+                                   10LL * 1000LL * 1000LL * 1000LL);
     (*env)->ReleaseByteArrayElements(env, buf, data, JNI_ABORT);
     if (r < 0) {
         LOGW("write returned %d (%s)", r,
