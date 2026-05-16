@@ -118,7 +118,9 @@ public class RunavaSourceDataLine implements SourceDataLine {
         int channels = format.getChannels();
         int frameBytes = channels * 2;
         int frames = bufferSize > 0 ? bufferSize / frameBytes : 4096;
+        long t0 = System.nanoTime();
         long h = nativeOpen((int) format.getSampleRate(), channels, frames);
+        long openMs = (System.nanoTime() - t0) / 1_000_000L;
         if (h == 0L) throw new LineUnavailableException("nativeOpen returned 0");
         this.handle = h;
         this.format = format;
@@ -126,7 +128,8 @@ public class RunavaSourceDataLine implements SourceDataLine {
         open.set(true);
         mixer.fire(LineEvent.Type.OPEN, this, 0);
         System.out.println("[runava-audio] line opened "
-                + format.getSampleRate() + "Hz x" + channels + " buf=" + frames + " frames");
+                + format.getSampleRate() + "Hz x" + channels + " buf=" + frames
+                + " frames in " + openMs + "ms");
     }
 
     @Override
@@ -141,15 +144,31 @@ public class RunavaSourceDataLine implements SourceDataLine {
     @Override
     public int write(byte[] b, int off, int len) {
         if (!open.get()) return 0;
-        return nativeWrite(handle, b, off, len);
+        long t0 = System.nanoTime();
+        int n = nativeWrite(handle, b, off, len);
+        long writeMs = (System.nanoTime() - t0) / 1_000_000L;
+        if (!firstWriteLogged) {
+            firstWriteLogged = true;
+            System.out.println("[runava-audio] first write " + n + " bytes in " + writeMs + "ms");
+        } else if (writeMs > 20) {
+            // Only log slow writes after the first one to avoid spam.
+            System.out.println("[runava-audio] slow write " + n + " bytes in " + writeMs + "ms");
+        }
+        return n;
     }
+
+    private volatile boolean firstWriteLogged;
 
     @Override
     public void start() {
         if (!open.get()) return;
+        long t0 = System.nanoTime();
         nativeStart(handle);
+        long startMs = (System.nanoTime() - t0) / 1_000_000L;
         running.set(true);
         mixer.fire(LineEvent.Type.START, this, 0);
+        firstWriteLogged = false;
+        System.out.println("[runava-audio] line start in " + startMs + "ms");
     }
 
     @Override
