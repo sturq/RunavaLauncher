@@ -1,50 +1,37 @@
 package net.kdt.pojavlaunch;
 
 import android.content.*;
-import android.graphics.SurfaceTexture;
-import android.opengl.EGL14;
-import android.opengl.EGLConfig;
-import android.opengl.EGLContext;
-import android.opengl.EGLDisplay;
-import android.opengl.EGLSurface;
-import android.opengl.GLES30;
-import android.util.AttributeSet;
-import android.util.Log;
-import android.view.Surface;
-import android.view.TextureView;
-import android.view.ViewGroup;
-import android.view.ViewParent;
+import android.content.res.*;
+import android.graphics.*;
+import android.text.*;
+import android.util.*;
+import android.view.*;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.IntBuffer;
+import java.util.*;
+import net.kdt.pojavlaunch.utils.*;
 
-import net.kdt.pojavlaunch.utils.JREUtils;
-
-/**
- * Hardware-accelerated AWT canvas. Reads the Cacio rgbArray frame buffer,
- * uploads it to a GLES texture, and draws it as a fullscreen quad. The CPU
- * compositing path (Bitmap.setPixels + Canvas.drawBitmap) is gone; the GPU
- * does the pixel work via a single texture-upload + textured draw.
- *
- * Still extends TextureView because backgrounding has to keep the surface
- * alive — that's the lifecycle property that fixed the JVM crash on
- * pause/resume. EGL renders into a window surface created from the
- * TextureView's SurfaceTexture; the texture stays valid while the
- * Activity is paused, so the render thread can keep ticking.
- */
 public class AWTCanvasView extends TextureView implements TextureView.SurfaceTextureListener, Runnable {
-
     public static int AWT_CANVAS_WIDTH = 720;
     public static int AWT_CANVAS_HEIGHT = 600;
+    // Cacio is set up as a square canvas (AWT_CANVAS_WIDTH = AWT_CANVAS_HEIGHT)
+    // so both portrait and landscape fit without recreating the JVM. Only the
+    // top-left visible-WxH rectangle of that canvas is composited to screen;
+    // RuneLite's JFrame is resized to exactly that rect by the JVM-side
+    // agent on every orientation change.
     public static volatile int AWT_VISIBLE_WIDTH = 720;
     public static volatile int AWT_VISIBLE_HEIGHT = 600;
 
-    /** Legacy flag; the GLES path always renders opaque, the underlying
-     *  window background fills any unused pixels. Kept for source compat. */
-    public static boolean HIDE_FPS_OVERLAY = true;
+    /** When true, suppress the FPS overlay (drawn directly onto the Surface in run()). */
+    public static boolean HIDE_FPS_OVERLAY = false;
+
+    /** When true, clear with transparent instead of opaque black per-frame. Used by the
+     *  hybrid RuneLite activity so the GL surface underneath shows through where Cacio
+     *  doesn't paint pixels (e.g. the OSRS 3D game canvas area when GPU plugin is on). */
     public static boolean TRANSPARENT_BACKGROUND = false;
 
+    /** Set the Cacio managed-screen / bitmap size before this view is constructed.
+     *  Must be called before setContentView (i.e. before the JVM is launched too,
+     *  since cacio.managed.screensize is propagated as a -D JVM arg from these). */
     public static void setManagedScreenSize(int w, int h) {
         if (w >= 320 && h >= 240) {
             AWT_CANVAS_WIDTH = w;
@@ -53,14 +40,28 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
             AWT_VISIBLE_HEIGHT = h;
         }
     }
-
+    private static final int MAX_SIZE = 100;
+    private static final double NANOS = 1000000000.0;
     private boolean mIsDestroyed = false;
+    private final TextPaint mFpsPaint;
 
-    public AWTCanvasView(Context ctx) { this(ctx, null); }
-
+    // Temporary count fps https://stackoverflow.com/a/13729241
+    private final LinkedList<Long> mTimes = new LinkedList<Long>(){{add(System.nanoTime());}};
+    
+    public AWTCanvasView(Context ctx) {
+        this(ctx, null);
+    }
+    
     public AWTCanvasView(Context ctx, AttributeSet attrs) {
         super(ctx, attrs);
+        
+        mFpsPaint = new TextPaint();
+        mFpsPaint.setColor(Color.WHITE);
+        mFpsPaint.setTextSize(20);
+
+
         setSurfaceTextureListener(this);
+
         post(this::refreshSize);
     }
 
@@ -75,9 +76,17 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
     @Override
     public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
-        // Keep the texture alive across activity backgrounding — destroying
-        // it triggers a Surface lifecycle event that historically crashed
-        // the JVM. Return false → texture stays, render thread keeps running.
+        // Return false to KEEP the SurfaceTexture alive across activity
+        // backgrounding. With SurfaceView (our previous setup) the underlying
+        // Surface is destroyed by the Android compositor on every pause and
+        // recreated on resume — that destroy/recreate race is what's been
+        // crashing the JVM. TextureView's SurfaceTexture is owned by the
+        // app, not the compositor, so it stays valid. The render thread does
+        // NOT stop here — it keeps reading frames from the JVM and writing
+        // to the (offscreen but valid) texture. When the activity returns,
+        // the texture is reattached to the compositor and the user sees the
+        // already-current frame instantly. No surface lifecycle event ever
+        // reaches the JVM-side AWT path.
         return false;
     }
 
@@ -89,99 +98,26 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     }
 
     @Override
-    public void onSurfaceTextureUpdated(SurfaceTexture texture) { }
+    public void onSurfaceTextureUpdated(SurfaceTexture texture) {
+        getSurfaceTexture().setDefaultBufferSize(
+                Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH),
+                Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT));
+    }
 
-    /** ~16.67 ms = 60 Hz. */
+    /** Target frame interval. ~16.67 ms = 60 Hz. The Cacio render → setPixels → drawBitmap
+     *  pipeline is all CPU; running it at 300 FPS like the uncapped loop did wastes ~5x the
+     *  pixel work since the screen only refreshes at 60 Hz anyway. Capping frees that CPU
+     *  budget for the AWT scene paint itself, which is what makes RuneLite feel laggy. */
     private static final long FRAME_INTERVAL_NS = 16_666_667L;
 
     @Override
     public void run() {
+        Canvas canvas;
         Surface surface = new Surface(getSurfaceTexture());
-        EGLDisplay eglDisplay = EGL14.EGL_NO_DISPLAY;
-        EGLContext eglContext = EGL14.EGL_NO_CONTEXT;
-        EGLSurface eglSurface = EGL14.EGL_NO_SURFACE;
-        int program = 0;
-        int[] texIds = {0};
-        int[] vboIds = {0};
-        ByteBuffer pixelBuffer = null;
+        Bitmap rgbArrayBitmap = Bitmap.createBitmap(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT, Bitmap.Config.ARGB_8888);
+        Paint paint = new Paint();
+        long nextFrameNs = System.nanoTime();
         try {
-            eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
-            if (eglDisplay == EGL14.EGL_NO_DISPLAY) throw new RuntimeException("eglGetDisplay");
-            int[] version = new int[2];
-            if (!EGL14.eglInitialize(eglDisplay, version, 0, version, 1)) {
-                throw new RuntimeException("eglInitialize");
-            }
-
-            int[] configAttribs = {
-                    EGL14.EGL_RED_SIZE, 8,
-                    EGL14.EGL_GREEN_SIZE, 8,
-                    EGL14.EGL_BLUE_SIZE, 8,
-                    EGL14.EGL_ALPHA_SIZE, 8,
-                    EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
-                    EGL14.EGL_NONE
-            };
-            EGLConfig[] configs = new EGLConfig[1];
-            int[] numConfigs = new int[1];
-            if (!EGL14.eglChooseConfig(eglDisplay, configAttribs, 0, configs, 0, 1, numConfigs, 0)
-                    || numConfigs[0] == 0) {
-                throw new RuntimeException("eglChooseConfig");
-            }
-            EGLConfig eglConfig = configs[0];
-
-            int[] ctxAttribs = { EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE };
-            eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig,
-                    EGL14.EGL_NO_CONTEXT, ctxAttribs, 0);
-            if (eglContext == EGL14.EGL_NO_CONTEXT) {
-                throw new RuntimeException("eglCreateContext (ES3)");
-            }
-
-            int[] surfAttribs = { EGL14.EGL_NONE };
-            eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, eglConfig,
-                    surface, surfAttribs, 0);
-            if (eglSurface == EGL14.EGL_NO_SURFACE) {
-                throw new RuntimeException("eglCreateWindowSurface");
-            }
-
-            if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
-                throw new RuntimeException("eglMakeCurrent");
-            }
-
-            program = buildProgram();
-            int posLoc      = GLES30.glGetAttribLocation(program, "aPos");
-            int tcLoc       = GLES30.glGetAttribLocation(program, "aTex");
-            int texLoc      = GLES30.glGetUniformLocation(program, "uTex");
-            int scaleLoc    = GLES30.glGetUniformLocation(program, "uTexScale");
-
-            // Fullscreen quad: x, y, u, v. Texture origin (0,0) is top-left
-            // for our purposes; flip V so y up in NDC = y down in texture.
-            float[] verts = {
-                    -1f,  1f, 0f, 0f,
-                    -1f, -1f, 0f, 1f,
-                     1f,  1f, 1f, 0f,
-                     1f, -1f, 1f, 1f,
-            };
-            ByteBuffer vbb = ByteBuffer.allocateDirect(verts.length * 4).order(ByteOrder.nativeOrder());
-            vbb.asFloatBuffer().put(verts);
-            vbb.position(0);
-            GLES30.glGenBuffers(1, vboIds, 0);
-            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboIds[0]);
-            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, verts.length * 4, vbb, GLES30.GL_STATIC_DRAW);
-
-            GLES30.glGenTextures(1, texIds, 0);
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texIds[0]);
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR);
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR);
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE);
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE);
-            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA,
-                    AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT, 0,
-                    GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, null);
-
-            int pixelBytes = AWT_CANVAS_WIDTH * AWT_CANVAS_HEIGHT * 4;
-            pixelBuffer = ByteBuffer.allocateDirect(pixelBytes).order(ByteOrder.nativeOrder());
-            IntBuffer pixelInts = pixelBuffer.asIntBuffer();
-
-            long nextFrameNs = System.nanoTime();
             while (!mIsDestroyed && surface.isValid()) {
                 long now = System.nanoTime();
                 long sleepNs = nextFrameNs - now;
@@ -190,126 +126,65 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                     catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
                     nextFrameNs += FRAME_INTERVAL_NS;
                 } else if (sleepNs < -FRAME_INTERVAL_NS) {
+                    // We're more than a frame behind — resync rather than try to catch up.
                     nextFrameNs = now + FRAME_INTERVAL_NS;
                 } else {
                     nextFrameNs += FRAME_INTERVAL_NS;
                 }
 
-                int vw = Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH);
-                int vh = Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT);
-                getSurfaceTexture().setDefaultBufferSize(vw, vh);
-
-                int[] rgbArray = JREUtils.renderAWTScreenFrame();
+                // Keep the surface buffer sized to the current visible region.
+                // On orientation change AWT_VISIBLE_* changes, and the next
+                // frame here picks it up so the buffer matches before we draw.
+                getSurfaceTexture().setDefaultBufferSize(
+                        Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH),
+                        Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT));
+                canvas = surface.lockCanvas(null);
+                if (TRANSPARENT_BACKGROUND) {
+                    canvas.drawColor(android.graphics.Color.TRANSPARENT,
+                            android.graphics.PorterDuff.Mode.CLEAR);
+                } else {
+                    canvas.drawRGB(0, 0, 0);
+                }
+                int[] rgbArray = JREUtils.renderAWTScreenFrame(/* canvas, mWidth, mHeight */);
+                boolean mDrawing = rgbArray != null;
                 if (rgbArray != null) {
-                    pixelInts.clear();
-                    pixelInts.put(rgbArray);
-                    pixelBuffer.position(0);
-                    // Stride = full canvas width, but we only upload the
-                    // visible vw x vh top-left rect — GL_UNPACK_ROW_LENGTH
-                    // lets GL skip the unused tail of each row.
-                    GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texIds[0]);
-                    GLES30.glPixelStorei(GLES30.GL_UNPACK_ROW_LENGTH, AWT_CANVAS_WIDTH);
-                    GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, vw, vh,
-                            GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, pixelBuffer);
-                    GLES30.glPixelStorei(GLES30.GL_UNPACK_ROW_LENGTH, 0);
+                    int vw = Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH);
+                    int vh = Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT);
+                    canvas.save();
+                    rgbArrayBitmap.setPixels(rgbArray, 0, AWT_CANVAS_WIDTH, 0, 0, vw, vh);
+                    // Draw the visible region to fill the surface buffer 1:1.
+                    // Surface buffer size matches the visible region (set in
+                    // onSurfaceTextureAvailable / onSurfaceTextureSizeChanged),
+                    // and the TextureView scales the whole buffer to the view's
+                    // aspect-fit dimensions. Using view coords here would leave
+                    // most of the buffer empty.
+                    android.graphics.Rect src = new android.graphics.Rect(0, 0, vw, vh);
+                    android.graphics.Rect dst = new android.graphics.Rect(0, 0, vw, vh);
+                    canvas.drawBitmap(rgbArrayBitmap, src, dst, paint);
+                    canvas.restore();
                 }
-
-                GLES30.glViewport(0, 0, vw, vh);
-                GLES30.glClearColor(0f, 0f, 0f, 1f);
-                GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT);
-                GLES30.glUseProgram(program);
-                GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
-                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texIds[0]);
-                GLES30.glUniform1i(texLoc, 0);
-                GLES30.glUniform2f(scaleLoc,
-                        (float) vw / AWT_CANVAS_WIDTH,
-                        (float) vh / AWT_CANVAS_HEIGHT);
-                GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboIds[0]);
-                GLES30.glEnableVertexAttribArray(posLoc);
-                GLES30.glEnableVertexAttribArray(tcLoc);
-                GLES30.glVertexAttribPointer(posLoc, 2, GLES30.GL_FLOAT, false, 16, 0);
-                GLES30.glVertexAttribPointer(tcLoc, 2, GLES30.GL_FLOAT, false, 16, 8);
-                GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4);
-                GLES30.glDisableVertexAttribArray(posLoc);
-                GLES30.glDisableVertexAttribArray(tcLoc);
-
-                EGL14.eglSwapBuffers(eglDisplay, eglSurface);
+                if (!HIDE_FPS_OVERLAY) {
+                    canvas.drawText("FPS: " + (Math.round(fps() * 10) / 10) + ", drawing=" + mDrawing, 0, 20, mFpsPaint);
+                }
+                surface.unlockCanvasAndPost(canvas);
             }
-        } catch (Throwable t) {
-            Log.e("AWTCanvasView", "GL render loop failed", t);
-        } finally {
-            if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
-                EGL14.eglMakeCurrent(eglDisplay,
-                        EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT);
-                if (program != 0) GLES30.glDeleteProgram(program);
-                if (texIds[0] != 0) GLES30.glDeleteTextures(1, texIds, 0);
-                if (vboIds[0] != 0) GLES30.glDeleteBuffers(1, vboIds, 0);
-                if (eglSurface != EGL14.EGL_NO_SURFACE) {
-                    EGL14.eglDestroySurface(eglDisplay, eglSurface);
-                }
-                if (eglContext != EGL14.EGL_NO_CONTEXT) {
-                    EGL14.eglDestroyContext(eglDisplay, eglContext);
-                }
-                EGL14.eglTerminate(eglDisplay);
-            }
-            surface.release();
+        } catch (Throwable throwable) {
+            Tools.showError(getContext(), throwable);
         }
+        rgbArrayBitmap.recycle();
+        surface.release();
     }
 
-    private static final String VS_SOURCE =
-            "attribute vec2 aPos;\n" +
-            "attribute vec2 aTex;\n" +
-            "uniform vec2 uTexScale;\n" +
-            "varying vec2 vTex;\n" +
-            "void main() {\n" +
-            "    gl_Position = vec4(aPos, 0.0, 1.0);\n" +
-            "    vTex = aTex * uTexScale;\n" +
-            "}\n";
-
-    /** Cacio rgbArray is ARGB ints. On the little-endian devices we target
-     *  the byte order in memory is B,G,R,A. Reading as GL_RGBA gives
-     *  c.r=B, c.g=G, c.b=R, c.a=A — swizzle .bgr back to actual RGB and
-     *  force alpha 1.0 (we render opaque on the shared output). */
-    private static final String FS_SOURCE =
-            "precision mediump float;\n" +
-            "varying vec2 vTex;\n" +
-            "uniform sampler2D uTex;\n" +
-            "void main() {\n" +
-            "    vec4 c = texture2D(uTex, vTex);\n" +
-            "    gl_FragColor = vec4(c.b, c.g, c.r, 1.0);\n" +
-            "}\n";
-
-    private static int buildProgram() {
-        int vs = compileShader(GLES30.GL_VERTEX_SHADER, VS_SOURCE);
-        int fs = compileShader(GLES30.GL_FRAGMENT_SHADER, FS_SOURCE);
-        int prog = GLES30.glCreateProgram();
-        GLES30.glAttachShader(prog, vs);
-        GLES30.glAttachShader(prog, fs);
-        GLES30.glLinkProgram(prog);
-        int[] status = new int[1];
-        GLES30.glGetProgramiv(prog, GLES30.GL_LINK_STATUS, status, 0);
-        if (status[0] == GLES30.GL_FALSE) {
-            String log = GLES30.glGetProgramInfoLog(prog);
-            GLES30.glDeleteProgram(prog);
-            throw new RuntimeException("Link failed: " + log);
+    /** Calculates and returns frames per second */
+    private double fps() {
+        long lastTime = System.nanoTime();
+        double difference = (lastTime - mTimes.getFirst()) / NANOS;
+        mTimes.addLast(lastTime);
+        int size = mTimes.size();
+        if (size > MAX_SIZE) {
+            mTimes.removeFirst();
         }
-        GLES30.glDeleteShader(vs);
-        GLES30.glDeleteShader(fs);
-        return prog;
-    }
-
-    private static int compileShader(int type, String src) {
-        int s = GLES30.glCreateShader(type);
-        GLES30.glShaderSource(s, src);
-        GLES30.glCompileShader(s);
-        int[] status = new int[1];
-        GLES30.glGetShaderiv(s, GLES30.GL_COMPILE_STATUS, status, 0);
-        if (status[0] == GLES30.GL_FALSE) {
-            String log = GLES30.glGetShaderInfoLog(s);
-            GLES30.glDeleteShader(s);
-            throw new RuntimeException("Shader compile failed: " + log);
-        }
-        return s;
+        return difference > 0 ? mTimes.size() / difference : 0.0;
     }
 
     /** Listener for visible-region changes; the activity uses this to forward
@@ -323,14 +198,19 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     }
 
     /** Recompute the visible region from the parent view's actual pixel
-     *  dimensions and resize this view to fill the parent exactly. */
+     *  dimensions (which include window insets and any system bars the
+     *  Activity ate, so the result *always* matches what's actually on
+     *  screen — unlike DisplayMetrics which can lag or include extras),
+     *  set the view to exactly fill the parent, and fire the listener so
+     *  the JVM-side agent gets a RESIZE IPC with matching dimensions. */
     public void refreshSize(){
-        ViewParent vp = getParent();
-        if (!(vp instanceof ViewGroup)) return;
-        ViewGroup parent = (ViewGroup) vp;
+        android.view.ViewParent vp = getParent();
+        if (!(vp instanceof android.view.ViewGroup)) return;
+        android.view.ViewGroup parent = (android.view.ViewGroup) vp;
         int pw = parent.getWidth();
         int ph = parent.getHeight();
         if (pw <= 0 || ph <= 0) {
+            // Parent hasn't been measured yet; try again after this layout pass.
             post(this::refreshSize);
             return;
         }
@@ -349,9 +229,13 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
             VisibleRegionListener l = sVisibleRegionListener;
             if (l != null) l.onVisibleRegionChanged(newVisW, newVisH);
         }
+        // Fill the parent exactly: parent dimensions match the device's
+        // current orientation, and the visible-region aspect matches them
+        // too, so the buffer scales 1:1 with no bars or stretch.
         ViewGroup.LayoutParams layoutParams = getLayoutParams();
         layoutParams.width = pw;
         layoutParams.height = ph;
         setLayoutParams(layoutParams);
     }
+
 }
