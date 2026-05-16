@@ -726,6 +726,11 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                     javaArgList.add("-Xbootclasspath/a:" + audioJar.getAbsolutePath());
                     Log.i("RuneLiteGame", "audio bootcp=" + audioJar.getAbsolutePath()
                             + " size=" + audioJar.length());
+                    // The JVM can't see Android's native lib dir via java.library.path;
+                    // hand RunavaSourceDataLine the absolute .so path so it can System.load.
+                    String soPath = getApplicationInfo().nativeLibraryDir + "/librunava_audio.so";
+                    javaArgList.add("-Drunava.audio.library=" + soPath);
+                    Log.i("RuneLiteGame", "runava.audio.library=" + soPath);
                 } else {
                     Log.w("RuneLiteGame", "audio SPI jar could not be extracted; sound will be silent");
                 }

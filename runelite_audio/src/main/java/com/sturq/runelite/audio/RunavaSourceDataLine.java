@@ -30,13 +30,23 @@ public class RunavaSourceDataLine implements SourceDataLine {
         if (sNativeLoadError != null) {
             throw new LineUnavailableException("librunava_audio.so failed earlier: " + sNativeLoadError);
         }
+        // The JVM's java.library.path only points at $JAVA_HOME/lib — Android's
+        // app-private nativeLibraryDir isn't in there, so System.loadLibrary
+        // can't find librunava_audio.so. The Android activity passes the
+        // absolute path via -Drunava.audio.library so we can System.load it.
+        String absPath = System.getProperty("runava.audio.library");
         try {
-            System.loadLibrary("runava_audio");
+            if (absPath != null && !absPath.isEmpty()) {
+                System.load(absPath);
+                System.out.println("[runava-audio] librunava_audio.so loaded from " + absPath);
+            } else {
+                System.loadLibrary("runava_audio");
+                System.out.println("[runava-audio] librunava_audio.so loaded via java.library.path");
+            }
             sNativeLoaded = true;
-            System.out.println("[runava-audio] librunava_audio.so loaded");
         } catch (Throwable t) {
             sNativeLoadError = t;
-            throw new LineUnavailableException("loadLibrary runava_audio failed: " + t);
+            throw new LineUnavailableException("load runava_audio failed: " + t);
         }
     }
 
