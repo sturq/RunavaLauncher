@@ -134,14 +134,16 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
         // Clear any stale pause sentinel from a prior session that exited abnormally.
         setAgentPaused(false);
-        // Cacio at 60% of device res — middle ground for sharp game canvas + tappable
-        // sidebar icons after --scale 2 enlarges the Swing UI.
+        // Square Cacio managed-screen sized to the device's longer edge × 60%.
+        // We support both portrait and landscape; the JFrame inside gets
+        // resized to the current orientation's visible aspect, and only that
+        // sub-rect of the canvas is shown on screen. Square means both
+        // rotations fit without re-launching the JVM.
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-        int sw = Math.max(dm.widthPixels, dm.heightPixels);
-        int sh = Math.min(dm.widthPixels, dm.heightPixels);
-        sw = (sw * 3) / 5;
-        sh = (sh * 3) / 5;
-        AWTCanvasView.setManagedScreenSize(sw, sh);
+        int longerEdge = Math.max(dm.widthPixels, dm.heightPixels);
+        int canvasDim = (longerEdge * 3) / 5;
+        AWTCanvasView.setManagedScreenSize(canvasDim, canvasDim);
+        updateVisibleRegionForOrientation(canvasDim, dm.widthPixels, dm.heightPixels);
         AWTCanvasView.HIDE_FPS_OVERLAY = true;
         AWTCanvasView.TRANSPARENT_BACKGROUND = true;
         setContentView(R.layout.activity_runelite_game);
@@ -374,8 +376,8 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                         mUiHandler.removeCallbacks(mLongPressFire);
                         if (mUiZoneTouch) {
                             AWTInputBridge.sendMousePos(
-                                    (int) MathUtils.map(mDownX, 0, mCanvas.getWidth(), 0, AWTCanvasView.AWT_CANVAS_WIDTH),
-                                    (int) MathUtils.map(mDownY, 0, mCanvas.getHeight(), 0, AWTCanvasView.AWT_CANVAS_HEIGHT));
+                                    (int) MathUtils.map(mDownX, 0, mCanvas.getWidth(), 0, AWTCanvasView.AWT_VISIBLE_WIDTH),
+                                    (int) MathUtils.map(mDownY, 0, mCanvas.getHeight(), 0, AWTCanvasView.AWT_VISIBLE_HEIGHT));
                             AWTInputBridge.sendMousePress(AWTInputEvent.BUTTON1_DOWN_MASK, true);
                             mLeftButtonHeld = true;
                             sendScaledMousePosition(x, y);
@@ -482,6 +484,38 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 fos.write((line + "\n").getBytes());
             }
         } catch (Throwable ignored) {}
+    }
+
+    /** Compute the JFrame visible region inside the square Cacio canvas for
+     *  the current screen aspect, push it to AWTCanvasView, and tell the
+     *  JVM-side agent to resize the JFrame to match. Called both at first
+     *  launch (in onCreate before the JVM is up) and at every orientation
+     *  change after that (where the agent picks up the resize). */
+    private void updateVisibleRegionForOrientation(int canvasDim, int screenW, int screenH) {
+        int visW, visH;
+        if (screenW >= screenH) {
+            // Landscape: full canvas width, shorter height.
+            visW = canvasDim;
+            visH = canvasDim * screenH / screenW;
+        } else {
+            // Portrait: full canvas height, shorter width.
+            visW = canvasDim * screenW / screenH;
+            visH = canvasDim;
+        }
+        AWTCanvasView.AWT_VISIBLE_WIDTH = visW;
+        AWTCanvasView.AWT_VISIBLE_HEIGHT = visH;
+        writeInputRequest("RESIZE " + visW + " " + visH);
+    }
+
+    @Override
+    public void onConfigurationChanged(@androidx.annotation.NonNull android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        // Canvas dim was set in onCreate; reuse the same square size and
+        // just recompute the visible region for the new orientation.
+        int canvasDim = AWTCanvasView.AWT_CANVAS_WIDTH;
+        updateVisibleRegionForOrientation(canvasDim, dm.widthPixels, dm.heightPixels);
+        if (mCanvas != null) mCanvas.post(() -> mCanvas.refreshSize());
     }
 
     /** Same arrow-key direction mapping used by two-finger camera; shared with one-finger
@@ -609,8 +643,8 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         x = Math.max(0, Math.min((float)w, x));
         y = Math.max(0, Math.min((float)h, y));
         AWTInputBridge.sendMousePos(
-                (int) MathUtils.map(x, 0, w, 0, AWTCanvasView.AWT_CANVAS_WIDTH),
-                (int) MathUtils.map(y, 0, h, 0, AWTCanvasView.AWT_CANVAS_HEIGHT));
+                (int) MathUtils.map(x, 0, w, 0, AWTCanvasView.AWT_VISIBLE_WIDTH),
+                (int) MathUtils.map(y, 0, h, 0, AWTCanvasView.AWT_VISIBLE_HEIGHT));
     }
 
     /** Reserve the top portion of both left and right edges for our app's taps.

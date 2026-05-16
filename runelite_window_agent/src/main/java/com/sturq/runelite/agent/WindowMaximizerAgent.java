@@ -201,6 +201,13 @@ public class WindowMaximizerAgent {
                 postRightClick();
             } else if (line.equals("FOCUSGAME")) {
                 focusGameCanvas();
+            } else if (line.startsWith("RESIZE ")) {
+                String[] parts = line.substring(7).trim().split("\\s+");
+                if (parts.length == 2) {
+                    int w = Integer.parseInt(parts[0]);
+                    int h = Integer.parseInt(parts[1]);
+                    setTargetSize(w, h);
+                }
             }
             // Lifecycle commands (ICONIFY / DEICONIFY / suspend AWT threads) were
             // removed: every attempt to signal AWT on activity pause TRIGGERED the
@@ -339,11 +346,33 @@ public class WindowMaximizerAgent {
         });
     }
 
+    /** Target frame size set by RESIZE IPC from the Android activity. Defaults
+     *  to the Cacio managed screen size (the full square canvas) but the
+     *  activity overrides this on every orientation change so the JFrame
+     *  fills only the visible portion of the canvas. */
+    private static volatile int sTargetW = 0;
+    private static volatile int sTargetH = 0;
+
+    private static void setTargetSize(int w, int h) {
+        if (w <= 0 || h <= 0) return;
+        sTargetW = w;
+        sTargetH = h;
+        // Force an immediate sweep so the user doesn't see the stale aspect
+        // for the next poll interval after rotation.
+        javax.swing.SwingUtilities.invokeLater(WindowMaximizerAgent::sweep);
+    }
+
     private static void sweep() {
         Frame[] frames = Frame.getFrames();
         if (frames.length == 0) return;
-        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
-        if (screen == null || screen.width <= 0 || screen.height <= 0) return;
+        int targetW = sTargetW;
+        int targetH = sTargetH;
+        if (targetW <= 0 || targetH <= 0) {
+            Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
+            if (screen == null || screen.width <= 0 || screen.height <= 0) return;
+            targetW = screen.width;
+            targetH = screen.height;
+        }
         for (Frame f : frames) {
             if (f == null) continue;
             // Frame.getFrames() returns only Frames (Dialog extends Window directly,
@@ -354,15 +383,16 @@ public class WindowMaximizerAgent {
                 int curH = f.getHeight();
                 int curX = f.getX();
                 int curY = f.getY();
-                if (curW != screen.width || curH != screen.height || curX != 0 || curY != 0) {
+                if (curW != targetW || curH != targetH || curX != 0 || curY != 0) {
                     f.setLocation(0, 0);
-                    f.setSize(screen.width, screen.height);
-                    f.setExtendedState(f.getExtendedState() | Frame.MAXIMIZED_BOTH);
+                    f.setSize(targetW, targetH);
+                    // Don't MAXIMIZED_BOTH — that snaps the frame to Cacio's
+                    // full screen size and undoes our orientation-fit. Just
+                    // a plain setSize is what we want.
                     f.validate();
                     System.out.println("[WindowMaximizerAgent] resize '" + f.getTitle()
                             + "' " + curW + "x" + curH + " @ " + curX + "," + curY
-                            + " -> " + screen.width + "x" + screen.height + " @ 0,0"
-                            + " (state=" + Integer.toHexString(f.getExtendedState()) + ")");
+                            + " -> " + targetW + "x" + targetH + " @ 0,0");
                 }
             } catch (Throwable t) {
                 System.out.println("[WindowMaximizerAgent] resize failed: " + t);

@@ -13,6 +13,13 @@ import net.kdt.pojavlaunch.utils.*;
 public class AWTCanvasView extends TextureView implements TextureView.SurfaceTextureListener, Runnable {
     public static int AWT_CANVAS_WIDTH = 720;
     public static int AWT_CANVAS_HEIGHT = 600;
+    // Cacio is set up as a square canvas (AWT_CANVAS_WIDTH = AWT_CANVAS_HEIGHT)
+    // so both portrait and landscape fit without recreating the JVM. Only the
+    // top-left visible-WxH rectangle of that canvas is composited to screen;
+    // RuneLite's JFrame is resized to exactly that rect by the JVM-side
+    // agent on every orientation change.
+    public static volatile int AWT_VISIBLE_WIDTH = 720;
+    public static volatile int AWT_VISIBLE_HEIGHT = 600;
 
     /** When true, suppress the FPS overlay (drawn directly onto the Surface in run()). */
     public static boolean HIDE_FPS_OVERLAY = false;
@@ -29,6 +36,8 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         if (w >= 320 && h >= 240) {
             AWT_CANVAS_WIDTH = w;
             AWT_CANVAS_HEIGHT = h;
+            AWT_VISIBLE_WIDTH = w;
+            AWT_VISIBLE_HEIGHT = h;
         }
     }
     private static final int MAX_SIZE = 100;
@@ -127,9 +136,17 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                 int[] rgbArray = JREUtils.renderAWTScreenFrame(/* canvas, mWidth, mHeight */);
                 boolean mDrawing = rgbArray != null;
                 if (rgbArray != null) {
+                    int vw = Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH);
+                    int vh = Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT);
                     canvas.save();
-                    rgbArrayBitmap.setPixels(rgbArray, 0, AWT_CANVAS_WIDTH, 0, 0, AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT);
-                    canvas.drawBitmap(rgbArrayBitmap, 0, 0, paint);
+                    rgbArrayBitmap.setPixels(rgbArray, 0, AWT_CANVAS_WIDTH, 0, 0, vw, vh);
+                    // Only blit the visible top-left rectangle. The rest of
+                    // the square Cacio canvas isn't displayed in this
+                    // orientation, so we don't pay to copy it.
+                    android.graphics.Rect src = new android.graphics.Rect(0, 0, vw, vh);
+                    android.graphics.Rect dst = new android.graphics.Rect(
+                            0, 0, getWidth(), getHeight());
+                    canvas.drawBitmap(rgbArrayBitmap, src, dst, paint);
                     canvas.restore();
                 }
                 if (!HIDE_FPS_OVERLAY) {
@@ -156,16 +173,20 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         return difference > 0 ? mTimes.size() / difference : 0.0;
     }
 
-    /** Make the view fit the proper aspect ratio of the surface */
-    private void refreshSize(){
+    /** Fit the view to the *visible* region's aspect, not the full square
+     *  Cacio canvas. The visible region matches the device's current
+     *  orientation so the view fills the screen edge-to-edge with no bars
+     *  or stretching. */
+    /** Public so the activity can re-fit the view after orientation change. */
+    public void refreshSize(){
         ViewGroup.LayoutParams layoutParams = getLayoutParams();
-
+        int vw = AWT_VISIBLE_WIDTH, vh = AWT_VISIBLE_HEIGHT;
+        if (vw <= 0 || vh <= 0) { vw = AWT_CANVAS_WIDTH; vh = AWT_CANVAS_HEIGHT; }
         if(getHeight() < getWidth()){
-            layoutParams.width = AWT_CANVAS_WIDTH * getHeight() / AWT_CANVAS_HEIGHT;
+            layoutParams.width = vw * getHeight() / vh;
         }else{
-            layoutParams.height = AWT_CANVAS_HEIGHT * getWidth() / AWT_CANVAS_WIDTH;
+            layoutParams.height = vh * getWidth() / vw;
         }
-
         setLayoutParams(layoutParams);
     }
 
