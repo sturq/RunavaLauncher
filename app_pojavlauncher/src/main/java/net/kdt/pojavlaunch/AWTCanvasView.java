@@ -132,6 +132,14 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                     nextFrameNs += FRAME_INTERVAL_NS;
                 }
 
+                int[] rgbArray = JREUtils.renderAWTScreenFrame(/* canvas, mWidth, mHeight */);
+                // If RuneLite hasn't repainted, the JVM-side AWT returns null.
+                // Skip the whole lockCanvas / draw / post pipeline — the
+                // TextureView keeps showing the previously posted frame, which
+                // is the correct visual when nothing changed. Big idle/AFK
+                // battery win, no visible cost.
+                if (rgbArray == null && HIDE_FPS_OVERLAY) continue;
+
                 // Keep the surface buffer sized to the current visible region.
                 // On orientation change AWT_VISIBLE_* changes, and the next
                 // frame here picks it up so the buffer matches before we draw.
@@ -145,7 +153,6 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                 } else {
                     canvas.drawRGB(0, 0, 0);
                 }
-                int[] rgbArray = JREUtils.renderAWTScreenFrame(/* canvas, mWidth, mHeight */);
                 boolean mDrawing = rgbArray != null;
                 if (rgbArray != null) {
                     int vw = Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH);

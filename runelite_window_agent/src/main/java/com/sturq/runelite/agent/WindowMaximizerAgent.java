@@ -119,7 +119,7 @@ public class WindowMaximizerAgent {
         }
     }
 
-    /** Force a full-frame repaint on every visible JFrame every 100ms. Cacio's
+    /** Force a full-frame repaint on every visible JFrame periodically. Cacio's
      *  TTA backend only composites a component's pixels onto the managed-screen
      *  bitmap when the component reports a dirty region. RuneLite's plugin
      *  sidebar icons only repaint themselves on state changes — between those,
@@ -127,11 +127,12 @@ public class WindowMaximizerAgent {
      *  stale pixels for that area. Result: icons appear to disappear until you
      *  click and the click handler triggers a repaint.
      *
-     *  Nudging Frame.repaint() at 10Hz tells Cacio "this whole frame is dirty,"
-     *  forces a recomposite, and our render loop sees fresh pixels. Swing.Timer
-     *  fires on the EDT so the repaint call is on the right thread. */
+     *  The original implementation pulsed at 10 Hz which was wildly overkill —
+     *  icons rarely go stale, and 10 forced full-frame repaints per second
+     *  steal a noticeable slice of EDT/CPU time. 2.5 Hz keeps icons fresh
+     *  within ~400ms of any state change without dominating the EDT. */
     private static void startStaleRepaintNudger() {
-        javax.swing.Timer timer = new javax.swing.Timer(100, e -> {
+        javax.swing.Timer timer = new javax.swing.Timer(400, e -> {
             if (isPaused()) return;
             try {
                 for (Frame f : Frame.getFrames()) {
