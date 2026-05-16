@@ -147,7 +147,13 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         int minCanvasForRuneLite = 800 * longerEdge / Math.max(1, shorterEdge);
         int canvasDim = Math.max((longerEdge * 3) / 5, minCanvasForRuneLite);
         AWTCanvasView.setManagedScreenSize(canvasDim, canvasDim);
-        updateVisibleRegionForOrientation(canvasDim, dm.widthPixels, dm.heightPixels);
+        // Single source of truth: AWTCanvasView.refreshSize() computes the
+        // visible region from the parent view's measured pixels and fires
+        // this listener for us to push the same numbers to the JVM-side
+        // agent. The activity no longer guesses dimensions from
+        // DisplayMetrics (which lagged the actual screen on rotation).
+        AWTCanvasView.setVisibleRegionListener((vw, vh) ->
+                writeInputRequest("RESIZE " + vw + " " + vh));
         AWTCanvasView.HIDE_FPS_OVERLAY = true;
         AWTCanvasView.TRANSPARENT_BACKGROUND = true;
         setContentView(R.layout.activity_runelite_game);
@@ -490,41 +496,13 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         } catch (Throwable ignored) {}
     }
 
-    /** Compute the JFrame visible region inside the square Cacio canvas for
-     *  the current screen aspect, push it to AWTCanvasView, and tell the
-     *  JVM-side agent to resize the JFrame to match. Called both at first
-     *  launch (in onCreate before the JVM is up) and at every orientation
-     *  change after that (where the agent picks up the resize). */
-    private void updateVisibleRegionForOrientation(int canvasDim, int screenW, int screenH) {
-        int visW, visH;
-        if (screenW >= screenH) {
-            // Landscape: full canvas width, shorter height.
-            visW = canvasDim;
-            visH = canvasDim * screenH / screenW;
-        } else {
-            // Portrait: full canvas height, shorter width.
-            visW = canvasDim * screenW / screenH;
-            visH = canvasDim;
-        }
-        AWTCanvasView.AWT_VISIBLE_WIDTH = visW;
-        AWTCanvasView.AWT_VISIBLE_HEIGHT = visH;
-        writeInputRequest("RESIZE " + visW + " " + visH);
-    }
-
     @Override
     public void onConfigurationChanged(@androidx.annotation.NonNull android.content.res.Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-        // Canvas dim was set in onCreate; reuse the same square size and
-        // just recompute the visible region for the new orientation.
-        int canvasDim = AWTCanvasView.AWT_CANVAS_WIDTH;
-        updateVisibleRegionForOrientation(canvasDim, dm.widthPixels, dm.heightPixels);
         if (mCanvas != null) {
-            // Reset to match_parent first: the previous orientation left
-            // explicit pixel layoutParams on the view (e.g. 2400x1080), which
-            // would push it off-screen in portrait. After the parent finishes
-            // its new layout pass, refreshSize() shrinks it back to the
-            // correct visible aspect.
+            // Reset to match_parent first so the previous orientation's
+            // explicit pixel layoutParams don't push the view off-screen
+            // before refreshSize() runs.
             android.view.ViewGroup.LayoutParams lp = mCanvas.getLayoutParams();
             lp.width = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
             lp.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT;

@@ -187,20 +187,54 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         return difference > 0 ? mTimes.size() / difference : 0.0;
     }
 
-    /** Fit the view to the *visible* region's aspect, not the full square
-     *  Cacio canvas. The visible region matches the device's current
-     *  orientation so the view fills the screen edge-to-edge with no bars
-     *  or stretching. */
-    /** Public so the activity can re-fit the view after orientation change. */
+    /** Listener for visible-region changes; the activity uses this to forward
+     *  the new size to the JVM-side agent so it can resize the JFrame. */
+    public interface VisibleRegionListener {
+        void onVisibleRegionChanged(int width, int height);
+    }
+    private static VisibleRegionListener sVisibleRegionListener;
+    public static void setVisibleRegionListener(VisibleRegionListener l) {
+        sVisibleRegionListener = l;
+    }
+
+    /** Recompute the visible region from the parent view's actual pixel
+     *  dimensions (which include window insets and any system bars the
+     *  Activity ate, so the result *always* matches what's actually on
+     *  screen — unlike DisplayMetrics which can lag or include extras),
+     *  set the view to exactly fill the parent, and fire the listener so
+     *  the JVM-side agent gets a RESIZE IPC with matching dimensions. */
     public void refreshSize(){
-        ViewGroup.LayoutParams layoutParams = getLayoutParams();
-        int vw = AWT_VISIBLE_WIDTH, vh = AWT_VISIBLE_HEIGHT;
-        if (vw <= 0 || vh <= 0) { vw = AWT_CANVAS_WIDTH; vh = AWT_CANVAS_HEIGHT; }
-        if(getHeight() < getWidth()){
-            layoutParams.width = vw * getHeight() / vh;
-        }else{
-            layoutParams.height = vh * getWidth() / vw;
+        android.view.ViewParent vp = getParent();
+        if (!(vp instanceof android.view.ViewGroup)) return;
+        android.view.ViewGroup parent = (android.view.ViewGroup) vp;
+        int pw = parent.getWidth();
+        int ph = parent.getHeight();
+        if (pw <= 0 || ph <= 0) {
+            // Parent hasn't been measured yet; try again after this layout pass.
+            post(this::refreshSize);
+            return;
         }
+        int canvasDim = AWT_CANVAS_WIDTH;
+        int newVisW, newVisH;
+        if (pw >= ph) {
+            newVisW = canvasDim;
+            newVisH = Math.max(1, canvasDim * ph / pw);
+        } else {
+            newVisW = Math.max(1, canvasDim * pw / ph);
+            newVisH = canvasDim;
+        }
+        if (newVisW != AWT_VISIBLE_WIDTH || newVisH != AWT_VISIBLE_HEIGHT) {
+            AWT_VISIBLE_WIDTH = newVisW;
+            AWT_VISIBLE_HEIGHT = newVisH;
+            VisibleRegionListener l = sVisibleRegionListener;
+            if (l != null) l.onVisibleRegionChanged(newVisW, newVisH);
+        }
+        // Fill the parent exactly: parent dimensions match the device's
+        // current orientation, and the visible-region aspect matches them
+        // too, so the buffer scales 1:1 with no bars or stretch.
+        ViewGroup.LayoutParams layoutParams = getLayoutParams();
+        layoutParams.width = pw;
+        layoutParams.height = ph;
         setLayoutParams(layoutParams);
     }
 
