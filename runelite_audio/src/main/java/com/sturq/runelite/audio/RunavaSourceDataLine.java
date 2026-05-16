@@ -58,6 +58,29 @@ public class RunavaSourceDataLine implements SourceDataLine {
     private static native void nativeClose(long handle);
     private static native long nativeGetFramePosition(long handle);
 
+    /** Open + close one stream at RuneLite's common format in the background.
+     *  The native cache then has a warm stream to hand back when the first
+     *  real SourceDataLine.open arrives — that first open used to cost
+     *  150-300ms on the EDT and was the loudest lag spike at game startup. */
+    public static void prewarmInBackground() {
+        Thread t = new Thread(() -> {
+            try {
+                ensureNative();
+                long h = nativeOpen(22050, 2, 4096);
+                if (h != 0) {
+                    nativeClose(h);
+                    System.out.println("[runava-audio] prewarm complete 22050Hz x2");
+                } else {
+                    System.out.println("[runava-audio] prewarm: nativeOpen returned 0");
+                }
+            } catch (Throwable t2) {
+                System.out.println("[runava-audio] prewarm failed: " + t2);
+            }
+        }, "RunavaAudioPrewarm");
+        t.setDaemon(true);
+        t.start();
+    }
+
     private final RunavaAudioMixer mixer;
     private AudioFormat format;
     private long handle;

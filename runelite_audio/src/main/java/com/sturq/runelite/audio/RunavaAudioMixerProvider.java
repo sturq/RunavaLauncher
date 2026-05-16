@@ -24,6 +24,10 @@ public class RunavaAudioMixerProvider extends MixerProvider {
         // us. If this line never appears, the SPI scan never reached us and
         // the classpath setup is what's broken.
         System.out.println("[runava-audio] RunavaAudioMixerProvider loaded");
+        // Fire-and-forget warm-up: open and immediately close one AAudio
+        // stream so the first real line.open hits the native cache instead
+        // of paying full AAudio init cost on RuneLite's first sound.
+        RunavaSourceDataLine.prewarmInBackground();
     }
 
     public RunavaAudioMixerProvider() {
