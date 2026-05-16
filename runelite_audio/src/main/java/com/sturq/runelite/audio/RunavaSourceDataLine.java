@@ -66,13 +66,21 @@ public class RunavaSourceDataLine implements SourceDataLine {
         Thread t = new Thread(() -> {
             try {
                 ensureNative();
-                long h = nativeOpen(22050, 2, 4096);
-                if (h != 0) {
-                    nativeClose(h);
-                    System.out.println("[runava-audio] prewarm complete 22050Hz x2");
-                } else {
-                    System.out.println("[runava-audio] prewarm: nativeOpen returned 0");
+                // Open 4 streams of the common format and immediately close
+                // them, populating the native cache pool. RuneLite opens
+                // 3-4 concurrent SourceDataLines at startup; without this
+                // every one but the first paid full AAudio init cost.
+                long[] handles = new long[4];
+                int opened = 0;
+                for (int i = 0; i < handles.length; i++) {
+                    handles[i] = nativeOpen(22050, 2, 4096);
+                    if (handles[i] != 0) opened++;
                 }
+                for (long h : handles) {
+                    if (h != 0) nativeClose(h);
+                }
+                System.out.println("[runava-audio] prewarm complete: "
+                        + opened + "/" + handles.length + " streams at 22050Hz x2");
             } catch (Throwable t2) {
                 System.out.println("[runava-audio] prewarm failed: " + t2);
             }

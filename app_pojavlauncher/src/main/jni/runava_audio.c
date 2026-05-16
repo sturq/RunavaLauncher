@@ -115,24 +115,33 @@ typedef struct {
 static jlong as_handle(runava_line *l) { return (jlong)(intptr_t) l; }
 static runava_line *from_handle(jlong h) { return (runava_line *)(intptr_t) h; }
 
-// One-slot cache of a previously-opened stream. Opening AAudio costs
-// 50-200ms and RuneLite closes+reopens a line every time a track changes,
-// freezing the game thread for that duration. Stash the stream on close,
-// hand it back on next open if sample-rate and channels match.
+// Pool of previously-opened AAudio streams. RuneLite opens several
+// SourceDataLines concurrently (music + SFX channels), each at the same
+// 22050Hz stereo format, and each open costs 50-200ms — the visible
+// startup-and-music-change lag. With a single-slot cache only the first
+// reopen was fast; with this pool we can hand out several warm streams
+// in a row.
 #include <pthread.h>
+#define RUNAVA_CACHE_SLOTS 8
+typedef struct {
+    AAudioStream *stream;
+    int sampleRate;
+    int channels;
+} cache_slot;
 static pthread_mutex_t gCacheLock = PTHREAD_MUTEX_INITIALIZER;
-static AAudioStream *gCachedStream = NULL;
-static int gCachedSampleRate = 0;
-static int gCachedChannels = 0;
+static cache_slot gCache[RUNAVA_CACHE_SLOTS];
 
 static AAudioStream *cache_take(int sampleRate, int channels) {
     pthread_mutex_lock(&gCacheLock);
     AAudioStream *s = NULL;
-    if (gCachedStream != NULL
-            && gCachedSampleRate == sampleRate
-            && gCachedChannels == channels) {
-        s = gCachedStream;
-        gCachedStream = NULL;
+    for (int i = 0; i < RUNAVA_CACHE_SLOTS; i++) {
+        if (gCache[i].stream != NULL
+                && gCache[i].sampleRate == sampleRate
+                && gCache[i].channels == channels) {
+            s = gCache[i].stream;
+            gCache[i].stream = NULL;
+            break;
+        }
     }
     pthread_mutex_unlock(&gCacheLock);
     return s;
@@ -141,11 +150,14 @@ static AAudioStream *cache_take(int sampleRate, int channels) {
 static int cache_put(AAudioStream *stream, int sampleRate, int channels) {
     pthread_mutex_lock(&gCacheLock);
     int kept = 0;
-    if (gCachedStream == NULL) {
-        gCachedStream = stream;
-        gCachedSampleRate = sampleRate;
-        gCachedChannels = channels;
-        kept = 1;
+    for (int i = 0; i < RUNAVA_CACHE_SLOTS; i++) {
+        if (gCache[i].stream == NULL) {
+            gCache[i].stream = stream;
+            gCache[i].sampleRate = sampleRate;
+            gCache[i].channels = channels;
+            kept = 1;
+            break;
+        }
     }
     pthread_mutex_unlock(&gCacheLock);
     return kept;
