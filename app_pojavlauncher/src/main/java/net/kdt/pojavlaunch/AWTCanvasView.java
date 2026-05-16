@@ -201,20 +201,14 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
                 int[] rgbArray = JREUtils.renderAWTScreenFrame();
                 if (rgbArray != null) {
-                    // Only copy enough rows to cover the visible region.
-                    // GL_UNPACK_ROW_LENGTH = full canvas width tells GL to
-                    // walk by full-width strides through the buffer, but the
-                    // last AWT_CANVAS_WIDTH-vw pixels of each row aren't read,
-                    // and rows past row (vh-1) aren't touched at all — so we
-                    // don't need to copy them out of the Java heap.
-                    int rowInts = AWT_CANVAS_WIDTH;
-                    int copyInts = vh * rowInts;
-                    if (copyInts > rgbArray.length) copyInts = rgbArray.length;
                     pixelInts.clear();
-                    pixelInts.put(rgbArray, 0, copyInts);
+                    pixelInts.put(rgbArray);
                     pixelBuffer.position(0);
+                    // Stride = full canvas width, but we only upload the
+                    // visible vw x vh top-left rect — GL_UNPACK_ROW_LENGTH
+                    // lets GL skip the unused tail of each row.
                     GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texIds[0]);
-                    GLES30.glPixelStorei(GLES30.GL_UNPACK_ROW_LENGTH, rowInts);
+                    GLES30.glPixelStorei(GLES30.GL_UNPACK_ROW_LENGTH, AWT_CANVAS_WIDTH);
                     GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, vw, vh,
                             GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, pixelBuffer);
                     GLES30.glPixelStorei(GLES30.GL_UNPACK_ROW_LENGTH, 0);
