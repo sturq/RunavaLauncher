@@ -134,14 +134,18 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
         // Clear any stale pause sentinel from a prior session that exited abnormally.
         setAgentPaused(false);
-        // Square Cacio managed-screen sized to the device's longer edge × 60%.
-        // We support both portrait and landscape; the JFrame inside gets
-        // resized to the current orientation's visible aspect, and only that
-        // sub-rect of the canvas is shown on screen. Square means both
-        // rotations fit without re-launching the JVM.
+        // Square Cacio managed-screen so both orientations fit without
+        // restarting the JVM. The size has two competing constraints:
+        //   - smaller than the device's longer edge × 60% (cap CPU cost)
+        //   - large enough that the *shorter* visible side stays above
+        //     RuneLite's ~800px minimum window width (otherwise RuneLite
+        //     pack()s back larger and the agent's resize loop fights it,
+        //     leaving the UI clipped — that's what looked "stretched")
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
         int longerEdge = Math.max(dm.widthPixels, dm.heightPixels);
-        int canvasDim = (longerEdge * 3) / 5;
+        int shorterEdge = Math.min(dm.widthPixels, dm.heightPixels);
+        int minCanvasForRuneLite = 800 * longerEdge / Math.max(1, shorterEdge);
+        int canvasDim = Math.max((longerEdge * 3) / 5, minCanvasForRuneLite);
         AWTCanvasView.setManagedScreenSize(canvasDim, canvasDim);
         updateVisibleRegionForOrientation(canvasDim, dm.widthPixels, dm.heightPixels);
         AWTCanvasView.HIDE_FPS_OVERLAY = true;

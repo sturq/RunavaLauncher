@@ -383,7 +383,12 @@ public class WindowMaximizerAgent {
                 int curH = f.getHeight();
                 int curX = f.getX();
                 int curY = f.getY();
-                if (curW != targetW || curH != targetH || curX != 0 || curY != 0) {
+                // Small tolerance — RuneLite's pack() and layout managers
+                // sometimes drift the size by a couple of px and we don't
+                // want to start a resize-fight that flashes the UI every
+                // sweep tick.
+                if (Math.abs(curW - targetW) > 4 || Math.abs(curH - targetH) > 4
+                        || curX != 0 || curY != 0) {
                     f.setLocation(0, 0);
                     f.setSize(targetW, targetH);
                     // Don't MAXIMIZED_BOTH — that snaps the frame to Cacio's
