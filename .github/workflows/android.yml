@@ -9,7 +9,7 @@ on:
     branches-ignore:
       - 'l10n_v3_openjdk'
   schedule:
-    - cron: '0 4 * * *'   # daily 04:00 UTC — refresh APK with latest JRE artifacts
+    - cron: '0 4 * * *'   # daily 04:00 UTC - refresh APK with latest JRE artifacts
   workflow_dispatch:
 
 jobs:
@@ -33,18 +33,18 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      # JRE 8 deliberately omitted — RuneLite needs Java 11+ (compiled with major 55).
+      # JRE 8 deliberately omitted - RuneLite needs Java 11+ (compiled with major 55).
       # The JRE 8 binpack from Pojav is ~13 MB of dead weight for our APK.
       #
       # Using JRE 21 instead of 17: AngelAuraMC's OpenJDK 17 build for Android has
       # a deterministic libjvm.so+0xa14ca0 SIGSEGV in Cacio's AWT peer path that
-      # we couldn't work around at the agent or activity level — see the comment
+      # we couldn't work around at the agent or activity level - see the comment
       # in RuneLiteLauncherActivity for the disassembly notes.
 
       # Trying FCL-Team's OpenJDK 25 build. AngelAuraMC's OpenJDK 21 has a
       # use-after-free in its JNI handle-list grow function (libjvm.so+0xac44cc,
       # we verified by disassembly) that fires under any AWT-driven JNI burst.
-      # FCL-Team is a completely different OpenJDK port for Android — at the
+      # FCL-Team is a completely different OpenJDK port for Android - at the
       # same offset its libjvm has unrelated code (cbz, harmless), so at minimum
       # the specific bug we keep hitting is structurally not present.
       - name: Get JRE25
@@ -70,7 +70,7 @@ jobs:
       - name: Strip unused-arch JRE binaries
         run: |
           # arm64-v8a only (see Application.mk APP_ABI). FCL's JRE 25 bundle
-          # ships bin-arm.tar.xz, bin-arm64.tar.xz, bin-x86_64.tar.xz —
+          # ships bin-arm.tar.xz, bin-arm64.tar.xz, bin-x86_64.tar.xz -
           # we keep arm64 and drop the rest. ~15-20 MB savings.
           cd app_pojavlauncher/src/main/assets/components/jre-25
           rm -f bin-arm.tar.xz bin-x86.tar.xz bin-x86_64.tar.xz
@@ -78,7 +78,7 @@ jobs:
 
       - name: Build Debug .apk
         run: |
-          # Build the launcher (debug only — no release keystore in fork)
+          # Build the launcher (debug only - no release keystore in fork)
           gradle :app_pojavlauncher:assembleDebug
           mv app_pojavlauncher/build/outputs/apk/debug/app_pojavlauncher-debug.apk out/app-debug.apk
 
@@ -88,7 +88,7 @@ jobs:
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
-        # Keep going on storage-quota failures — the rolling release below is
+        # Keep going on storage-quota failures - the rolling release below is
         # the canonical delivery channel anyway. The artifact is just a
         # convenience for short-lived per-run downloads.
         continue-on-error: true

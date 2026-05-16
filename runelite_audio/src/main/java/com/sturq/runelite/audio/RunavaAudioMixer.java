@@ -21,7 +21,7 @@ import java.util.List;
  */
 public class RunavaAudioMixer implements Mixer {
 
-    /** Wide format set — accept any reasonable PCM_SIGNED 16-bit little-endian
+    /** Wide format set - accept any reasonable PCM_SIGNED 16-bit little-endian
      *  config. RuneLite picks 22050 / 44100 / 48000 Hz mono or stereo; we
      *  pass whatever it asks for straight through to AAudio. */
     private static final Line.Info SOURCE_LINE_INFO = new DataLine.Info(

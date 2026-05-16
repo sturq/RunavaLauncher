@@ -40,7 +40,7 @@ public class WindowMaximizerAgent {
     }
 
     /** Sentinel file the Android activity drops while paused. While present,
-     *  the agent doesn't touch AWT — no resizes, no wheel events, no clicks.
+     *  the agent doesn't touch AWT - no resizes, no wheel events, no clicks.
      *  We resolve it lazily from user.home, same dir as the input request file. */
     private static volatile File sPausedSentinel;
 
@@ -69,7 +69,7 @@ public class WindowMaximizerAgent {
                 try {
                     if (!isPaused()) sweep();
                 } catch (Throwable ignored) {
-                    // Don't let the poller die — AWT may still be coming up.
+                    // Don't let the poller die - AWT may still be coming up.
                 }
                 try {
                     Thread.sleep(System.currentTimeMillis() < deadline ? 250L : 1000L);
@@ -91,7 +91,7 @@ public class WindowMaximizerAgent {
     /** Log every javax.sound.sampled.spi.MixerProvider the JRE can find. If our
      *  RunavaAudioMixerProvider is in the list, the -Xbootclasspath/a: wiring
      *  is good and audio should be working. If only the JRE's own stubs
-     *  show up, the SPI scan never saw our jar — that's the layer to fix. */
+     *  show up, the SPI scan never saw our jar - that's the layer to fix. */
     private static void probeAudioSpi() {
         try {
             java.util.ServiceLoader<javax.sound.sampled.spi.MixerProvider> loader =
@@ -122,12 +122,12 @@ public class WindowMaximizerAgent {
     /** Force a full-frame repaint on every visible JFrame periodically. Cacio's
      *  TTA backend only composites a component's pixels onto the managed-screen
      *  bitmap when the component reports a dirty region. RuneLite's plugin
-     *  sidebar icons only repaint themselves on state changes — between those,
+     *  sidebar icons only repaint themselves on state changes - between those,
      *  their region stays "clean" in Cacio's view and our AWTCanvasView reads
      *  stale pixels for that area. Result: icons appear to disappear until you
      *  click and the click handler triggers a repaint.
      *
-     *  The original implementation pulsed at 10 Hz which was wildly overkill —
+     *  The original implementation pulsed at 10 Hz which was wildly overkill -
      *  icons rarely go stale, and 10 forced full-frame repaints per second
      *  steal a noticeable slice of EDT/CPU time. 2.5 Hz keeps icons fresh
      *  within ~400ms of any state change without dominating the EDT. */
@@ -143,13 +143,13 @@ public class WindowMaximizerAgent {
             } catch (Throwable ignored) {}
         });
         timer.setRepeats(true);
-        // EDT may not be alive yet when the agent's premain runs — kick it from
+        // EDT may not be alive yet when the agent's premain runs - kick it from
         // SwingUtilities so the Timer is created on a live EventQueue.
         javax.swing.SwingUtilities.invokeLater(timer::start);
     }
 
     /** File-based IPC for input events the Activity can't deliver via the AWT
-     *  bridge (notably mouse wheel — Caciocavallo's CTCAndroidInput doesn't
+     *  bridge (notably mouse wheel - Caciocavallo's CTCAndroidInput doesn't
      *  handle EVENT_TYPE_SCROLL). Activity writes a line to:
      *      $user.home/.runelitedroid_input
      *  Format per line:
@@ -166,7 +166,7 @@ public class WindowMaximizerAgent {
         Thread t = new Thread(() -> {
             while (true) {
                 try {
-                    // Always process the file — lifecycle commands like ICONIFY /
+                    // Always process the file - lifecycle commands like ICONIFY /
                     // DEICONIFY must run during pause/resume transitions so we
                     // can signal AWT to idle. handleInputLine() drops user-input
                     // commands (WHEEL/RIGHTCLICK) on its own when paused.
@@ -214,7 +214,7 @@ public class WindowMaximizerAgent {
             // removed: every attempt to signal AWT on activity pause TRIGGERED the
             // libjvm SIGSEGV we were trying to prevent. The Cacio peer path that
             // setExtendedState reaches hits a use-after-free in JavaThread. The
-            // safer move is to do nothing on pause — let RuneLite's repaint timer
+            // safer move is to do nothing on pause - let RuneLite's repaint timer
             // run, accept Android may freeze the process via its own cached-app
             // freezer, and rely on auto-restart for the rare crashes that still fire.
         } catch (Throwable t) {
@@ -265,7 +265,7 @@ public class WindowMaximizerAgent {
 
     /** Hard rate-limit: a burst of wheel events reproducibly crashed libjvm.so
      *  back when we used Component.dispatchEvent directly. Keep the limit even
-     *  though we're now on the system event queue — defense in depth. */
+     *  though we're now on the system event queue - defense in depth. */
     private static volatile long sLastWheelMs = 0L;
     private static final long MIN_WHEEL_GAP_MS = 60L;
 
@@ -294,8 +294,8 @@ public class WindowMaximizerAgent {
         });
     }
 
-    /** Walk the focused Window's tree for a java.awt.Canvas — RuneLite uses one
-     *  for the OSRS game viewport — and pull focus onto it. When the plugin
+    /** Walk the focused Window's tree for a java.awt.Canvas - RuneLite uses one
+     *  for the OSRS game viewport - and pull focus onto it. When the plugin
      *  sidebar is open the search text field auto-focuses; arrow keys from a
      *  camera drag then go to that text field instead of the canvas, so the
      *  camera doesn't move. Activity sends FOCUSGAME at the start of each
@@ -384,7 +384,7 @@ public class WindowMaximizerAgent {
                 int curH = f.getHeight();
                 int curX = f.getX();
                 int curY = f.getY();
-                // Small tolerance — RuneLite's pack() and layout managers
+                // Small tolerance - RuneLite's pack() and layout managers
                 // sometimes drift the size by a couple of px and we don't
                 // want to start a resize-fight that flashes the UI every
                 // sweep tick.
@@ -392,7 +392,7 @@ public class WindowMaximizerAgent {
                         || curX != 0 || curY != 0) {
                     f.setLocation(0, 0);
                     f.setSize(targetW, targetH);
-                    // Don't MAXIMIZED_BOTH — that snaps the frame to Cacio's
+                    // Don't MAXIMIZED_BOTH - that snaps the frame to Cacio's
                     // full screen size and undoes our orientation-fit. Just
                     // a plain setSize is what we want.
                     f.validate();
