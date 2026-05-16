@@ -318,3 +318,91 @@ Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeGetFramePosition(
     if (r != AAUDIO_OK) return (jlong) aa.s_getFramesWritten(line->stream);
     return (jlong) framePos;
 }
+
+// =====================================================================
+// Shared-stream path: one global AAudio output stream + Java-side mixer.
+// Each SourceDataLine no longer owns its own AAudio stream; instead they
+// drop PCM into ring buffers and GlobalAudioPump.pumpLoop sums them and
+// writes the result here. With one stream the HAL load stays constant
+// regardless of how many concurrent sounds RuneLite plays.
+// =====================================================================
+
+static AAudioStream *gSharedStream = NULL;
+
+JNIEXPORT jlong JNICALL
+Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeOpenShared(
+        JNIEnv *env, jclass clazz, jint sampleRate, jint channels) {
+    if (gSharedStream != NULL) return (jlong)(intptr_t) gSharedStream;
+    if (!aaudio_load()) return 0;
+    AAudioStreamBuilder *b = NULL;
+    aaudio_result_t r = aa.createStreamBuilder(&b);
+    if (r != AAUDIO_OK || b == NULL) {
+        LOGE("shared createStreamBuilder failed: %d", r);
+        return 0;
+    }
+    aa.sb_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
+    aa.sb_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+    aa.sb_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_NONE);
+    aa.sb_setFormat(b, AAUDIO_FORMAT_PCM_I16);
+    aa.sb_setChannelCount(b, channels);
+    aa.sb_setSampleRate(b, sampleRate);
+    aa.sb_setBufferCapacityInFrames(b, sampleRate); // ~1 second
+    AAudioStream *stream = NULL;
+    r = aa.sb_openStream(b, &stream);
+    aa.sb_delete(b);
+    if (r != AAUDIO_OK || stream == NULL) {
+        LOGE("shared openStream failed: %d (%s)", r,
+             aa.convertResultToText ? aa.convertResultToText(r) : "?");
+        return 0;
+    }
+    if (aa.s_setBufferSizeInFrames) {
+        int32_t cap = aa.s_getBufferCapacityInFrames(stream);
+        aa.s_setBufferSizeInFrames(stream, cap / 2);
+    }
+    gSharedStream = stream;
+    LOGI("shared stream opened %dHz x%d, framesPerBurst=%d, bufSize=%d",
+         sampleRate, channels,
+         aa.s_getFramesPerBurst(stream),
+         aa.s_getBufferSizeInFrames ? aa.s_getBufferSizeInFrames(stream) : -1);
+    return (jlong)(intptr_t) stream;
+}
+
+JNIEXPORT void JNICALL
+Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeStartShared(
+        JNIEnv *env, jclass clazz, jlong handle) {
+    AAudioStream *s = (AAudioStream *)(intptr_t) handle;
+    if (s == NULL || !aa.loaded) return;
+    aaudio_result_t r = aa.s_requestStart(s);
+    if (r != AAUDIO_OK) LOGW("shared requestStart: %d", r);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeWriteShared(
+        JNIEnv *env, jclass clazz, jlong handle,
+        jbyteArray buf, jint offset, jint len) {
+    AAudioStream *s = (AAudioStream *)(intptr_t) handle;
+    if (s == NULL || !aa.loaded || len <= 0) return 0;
+    // Shared stream is fixed-format stereo 16-bit -> 4 bytes per frame.
+    int frameBytes = 4;
+    if (len % frameBytes != 0) {
+        len -= len % frameBytes;
+        if (len <= 0) return 0;
+    }
+    jbyte *data = (*env)->GetByteArrayElements(env, buf, NULL);
+    if (data == NULL) return 0;
+    int32_t frames = len / frameBytes;
+    aaudio_result_t r = aa.s_write(s, data + offset, frames,
+                                   10LL * 1000LL * 1000LL * 1000LL);
+    (*env)->ReleaseByteArrayElements(env, buf, data, JNI_ABORT);
+    if (r < 0) return 0;
+    return r * frameBytes;
+}
+
+JNIEXPORT void JNICALL
+Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeCloseShared(
+        JNIEnv *env, jclass clazz, jlong handle) {
+    if (gSharedStream == NULL) return;
+    aa.s_requestStop(gSharedStream);
+    aa.s_close(gSharedStream);
+    gSharedStream = NULL;
+}
