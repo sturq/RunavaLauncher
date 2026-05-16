@@ -30,6 +30,7 @@ typedef int32_t aaudio_result_t;
 #define AAUDIO_DIRECTION_OUTPUT   0
 #define AAUDIO_SHARING_MODE_SHARED   0
 #define AAUDIO_PERFORMANCE_MODE_NONE 10
+#define AAUDIO_PERFORMANCE_MODE_LOW_LATENCY 12
 #define CLOCK_MONOTONIC_ID 1  // CLOCK_MONOTONIC
 
 // Opaque AAudio types.
@@ -114,35 +115,80 @@ typedef struct {
 static jlong as_handle(runava_line *l) { return (jlong)(intptr_t) l; }
 static runava_line *from_handle(jlong h) { return (runava_line *)(intptr_t) h; }
 
+// One-slot cache of a previously-opened stream. Opening AAudio costs
+// 50-200ms and RuneLite closes+reopens a line every time a track changes,
+// freezing the game thread for that duration. Stash the stream on close,
+// hand it back on next open if sample-rate and channels match.
+#include <pthread.h>
+static pthread_mutex_t gCacheLock = PTHREAD_MUTEX_INITIALIZER;
+static AAudioStream *gCachedStream = NULL;
+static int gCachedSampleRate = 0;
+static int gCachedChannels = 0;
+
+static AAudioStream *cache_take(int sampleRate, int channels) {
+    pthread_mutex_lock(&gCacheLock);
+    AAudioStream *s = NULL;
+    if (gCachedStream != NULL
+            && gCachedSampleRate == sampleRate
+            && gCachedChannels == channels) {
+        s = gCachedStream;
+        gCachedStream = NULL;
+    }
+    pthread_mutex_unlock(&gCacheLock);
+    return s;
+}
+
+static int cache_put(AAudioStream *stream, int sampleRate, int channels) {
+    pthread_mutex_lock(&gCacheLock);
+    int kept = 0;
+    if (gCachedStream == NULL) {
+        gCachedStream = stream;
+        gCachedSampleRate = sampleRate;
+        gCachedChannels = channels;
+        kept = 1;
+    }
+    pthread_mutex_unlock(&gCacheLock);
+    return kept;
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeOpen(
         JNIEnv *env, jclass clazz,
         jint sampleRate, jint channels, jint bufferFrames) {
     if (!aaudio_load()) return 0;
 
-    AAudioStreamBuilder *b = NULL;
-    aaudio_result_t r = aa.createStreamBuilder(&b);
-    if (r != AAUDIO_OK || b == NULL) {
-        LOGE("createStreamBuilder failed: %d", r);
-        return 0;
-    }
-    aa.sb_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
-    aa.sb_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
-    aa.sb_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_NONE);
-    aa.sb_setFormat(b, AAUDIO_FORMAT_PCM_I16);
-    aa.sb_setChannelCount(b, channels);
-    aa.sb_setSampleRate(b, sampleRate);
-    if (bufferFrames > 0) {
-        aa.sb_setBufferCapacityInFrames(b, bufferFrames * 2);
-    }
-
-    AAudioStream *stream = NULL;
-    r = aa.sb_openStream(b, &stream);
-    aa.sb_delete(b);
-    if (r != AAUDIO_OK || stream == NULL) {
-        LOGE("openStream failed: %d (%s)", r,
-             aa.convertResultToText ? aa.convertResultToText(r) : "?");
-        return 0;
+    // Reuse a cached stream of matching format if one's available — saves the
+    // 50-200ms AAudio open cost on every music/SFX transition.
+    AAudioStream *stream = cache_take(sampleRate, channels);
+    if (stream != NULL) {
+        LOGI("reused cached stream %dHz x%d", sampleRate, channels);
+    } else {
+        AAudioStreamBuilder *b = NULL;
+        aaudio_result_t r = aa.createStreamBuilder(&b);
+        if (r != AAUDIO_OK || b == NULL) {
+            LOGE("createStreamBuilder failed: %d", r);
+            return 0;
+        }
+        aa.sb_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
+        aa.sb_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+        aa.sb_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+        aa.sb_setFormat(b, AAUDIO_FORMAT_PCM_I16);
+        aa.sb_setChannelCount(b, channels);
+        aa.sb_setSampleRate(b, sampleRate);
+        if (bufferFrames > 0) {
+            aa.sb_setBufferCapacityInFrames(b, bufferFrames * 2);
+        }
+        r = aa.sb_openStream(b, &stream);
+        aa.sb_delete(b);
+        if (r != AAUDIO_OK || stream == NULL) {
+            LOGE("openStream failed: %d (%s)", r,
+                 aa.convertResultToText ? aa.convertResultToText(r) : "?");
+            return 0;
+        }
+        LOGI("opened stream %dHz x%d, framesPerBurst=%d, bufferCapFrames=%d",
+             sampleRate, channels,
+             aa.s_getFramesPerBurst(stream),
+             aa.s_getBufferCapacityInFrames(stream));
     }
 
     runava_line *line = (runava_line *) calloc(1, sizeof(runava_line));
@@ -153,10 +199,6 @@ Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeOpen(
     line->stream = stream;
     line->channels = channels;
     line->sampleRate = sampleRate;
-    LOGI("opened stream %dHz x%d, framesPerBurst=%d, bufferCapFrames=%d",
-         sampleRate, channels,
-         aa.s_getFramesPerBurst(stream),
-         aa.s_getBufferCapacityInFrames(stream));
     return as_handle(line);
 }
 
@@ -216,7 +258,16 @@ Java_com_sturq_runelite_audio_RunavaSourceDataLine_nativeClose(
         JNIEnv *env, jclass clazz, jlong handle) {
     runava_line *line = from_handle(handle);
     if (line == NULL) return;
-    if (aa.loaded && line->stream != NULL) aa.s_close(line->stream);
+    if (aa.loaded && line->stream != NULL) {
+        // Quiet the stream before caching so leftover queued frames don't
+        // bleed into the next line that picks it up.
+        aa.s_requestStop(line->stream);
+        aa.s_requestFlush(line->stream);
+        if (!cache_put(line->stream, line->sampleRate, line->channels)) {
+            // Cache slot taken — just close this one.
+            aa.s_close(line->stream);
+        }
+    }
     line->stream = NULL;
     free(line);
 }
