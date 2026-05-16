@@ -519,7 +519,18 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // just recompute the visible region for the new orientation.
         int canvasDim = AWTCanvasView.AWT_CANVAS_WIDTH;
         updateVisibleRegionForOrientation(canvasDim, dm.widthPixels, dm.heightPixels);
-        if (mCanvas != null) mCanvas.post(() -> mCanvas.refreshSize());
+        if (mCanvas != null) {
+            // Reset to match_parent first: the previous orientation left
+            // explicit pixel layoutParams on the view (e.g. 2400x1080), which
+            // would push it off-screen in portrait. After the parent finishes
+            // its new layout pass, refreshSize() shrinks it back to the
+            // correct visible aspect.
+            android.view.ViewGroup.LayoutParams lp = mCanvas.getLayoutParams();
+            lp.width = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+            lp.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+            mCanvas.setLayoutParams(lp);
+            mCanvas.post(() -> mCanvas.refreshSize());
+        }
     }
 
     /** Same arrow-key direction mapping used by two-finger camera; shared with one-finger
