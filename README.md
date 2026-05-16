@@ -19,31 +19,30 @@ Everything is bundled. Install one APK, tap the icon, log in, play.
 
 Grab the latest APK from the [releases page](https://github.com/sturq/RunavaLauncher/releases/latest) and sideload it. ~125 MB, arm64-v8a only.
 
-## Status
+## What works
 
-**Playable.** What works:
-
-* Launches RuneLite from a fresh install with no extra setup
-* Connects to OSRS — login, world hop, chat, walking, combat, etc.
-* The full RuneLite plugin sidebar — every plugin desktop has, same versions
-* Touch controls for camera, taps, right-click, zoom
-* Fullscreen, immersive layout, system gestures excluded from the right-edge UI strip
-* Survives backgrounding — switch apps, take a call, come back, RuneLite is still there
+* Full RuneLite client — login, world hop, chat, walking, combat, plugins, everything
+* The entire RuneLite plugin sidebar — same versions as desktop
+* **Audio** — sound effects, music, plugin sounds, through Android's AAudio output
+* **Both orientations** — the game reflows when you rotate the device, no bars or stretching
+* Touch controls for camera, taps, right-click, pinch-zoom
+* Fullscreen, immersive layout; system gestures excluded from the right-edge UI strip
+* Survives backgrounding — switch apps, take a call, come back, the game is still running
 * Material You themed launcher icon
 
-Known limitations:
+## Known limitations
 
 * **Software-rendered.** RuneLite's GPU plugin (`librlawt.so`) needs glibc + X11 + GLX symbols that Android doesn't have. The CPU renderer is what runs. Frame rate is fine on a modern phone, but you won't hit desktop GPU-plugin numbers.
-* **No audio.** No `javax.sound.sampled` provider is bundled. Game and plugin sounds are silent.
+* **Portrait is tight.** RuneLite's UI is built for landscape; in portrait everything reflows to fit, but the sidebar is necessarily narrower.
 
 ## Touch controls
 
 | Gesture | Action |
 | --- | --- |
 | 1-finger tap | Left click |
-| 1-finger long-press (≥ 200ms, no movement) | Right click (opens OSRS context menu) |
+| 1-finger long-press (≥ 200 ms, no movement) | Right click (opens OSRS context menu) |
 | 1-finger drag in game world (left ~75% of screen) | Camera rotate (arrow keys) |
-| 1-finger drag on RuneLite UI (right sidebar) | Left button held — for inventory drag, minimap drag, etc. |
+| 1-finger drag on RuneLite UI (right sidebar) | Left button held — inventory drag, minimap drag, etc. |
 | 2-finger drag | Camera rotate (arrow keys) |
 | 2-finger pinch | Zoom in / out (mouse wheel) |
 | ☰ menu (top-left) | Drawer: keyboard, copy/paste, virtual mouse toggle, log viewer, force-close |
@@ -61,17 +60,18 @@ GitHub Actions builds a debug APK on every push and on a daily 04:00 UTC cron. T
 
 ## Architecture
 
-The launcher is a fork of [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher) / Amethyst-Android, gutted down to the JVM-hosting path. What still comes from upstream:
+Fork of [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher) / Amethyst-Android, gutted down to the JVM-hosting path. From upstream:
 
-* FCL-Team's OpenJDK 25 build for Android (`aarch64`, embedded as a JRE tar.xz in `assets/components/jre-25/`). AngelAuraMC's JDK 17 and 21 both have a JNI handle-list bug in their `libjvm.so` that fires under Cacio's AWT peer calls — FCL-Team is a different OpenJDK port and dodges it.
+* FCL-Team's OpenJDK 25 for Android (`aarch64`, embedded as a JRE tar.xz in `assets/components/jre-25/`). AngelAuraMC's JDK 17 and 21 both have a JNI handle-list bug in their `libjvm.so` that fires under Cacio's AWT peer calls — FCL-Team is a different OpenJDK port and dodges it.
 * Caciocavallo TTA as the AWT toolkit (no X11)
-* The JNI glue that translates Cacio's AWT frame output into a software-rendered bitmap on a `TextureView`
+* JNI glue that translates Cacio's AWT frame output into a software-rendered bitmap on a `TextureView`
 
 Added or rewritten for RuneLite:
 
 * `RuneLiteLauncherActivity` — downloads the upstream RuneLite JAR on first launch, deduplicates entries, caches it, installs JRE 25, fires the game intent
-* `RuneLiteGameActivity` — fullscreen game-style host, touch → AWT mouse/key mapping, drawer-based menu, foreground-service keepalive
-* `runelite_window_agent/` — a Java agent loaded into the JVM via `-javaagent`. Force-maximizes the RuneLite JFrame to fill the Cacio screen, repaints the frame at 10 Hz so plugin sidebar icons don't go stale, refocuses the OSRS canvas on each camera drag, and runs a file-based IPC poller for mouse-wheel and right-click events that Cacio's input bridge doesn't handle directly.
+* `RuneLiteGameActivity` — fullscreen game-style host, touch → AWT mouse/key mapping, drawer-based menu, foreground-service keepalive, dynamic JFrame resizing on rotation
+* `runelite_audio/` — a `javax.sound.sampled.spi.MixerProvider` on the JVM boot classpath. Per-line ring buffers in Java; one shared AAudio output stream; software mix in a low-priority pump thread. `write()` never blocks the EDT.
+* `runelite_window_agent/` — Java agent loaded via `-javaagent`. Sizes the RuneLite JFrame to the current orientation's visible aspect, repaints the frame at 10 Hz so plugin sidebar icons don't go stale, refocuses the OSRS canvas on each camera drag, and runs a file-based IPC poller for mouse-wheel / right-click / RESIZE / FOCUSGAME events that Cacio's input bridge doesn't handle directly.
 
 The `:runelitegame` Android process is separate from `:launcher` and is kept alive by a foreground service so Android doesn't reap the JVM mid-session.
 
