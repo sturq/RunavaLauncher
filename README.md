@@ -52,26 +52,19 @@ Starting a camera drag also re-focuses the OSRS canvas, so arrow keys still rota
 ## Building
 
 ```bash
-./gradlew :app_pojavlauncher:assembleMainDebug
-# APK at: app_pojavlauncher/build/outputs/apk/main/debug/app_pojavlauncher-main-debug.apk
+./gradlew :app_pojavlauncher:assembleDebug
 ```
 
-GitHub Actions builds a debug APK on every push and on a daily 04:00 UTC cron. The "latest" release tag is updated automatically from `main`.
+GitHub Actions also builds a debug APK on every push and on a daily 04:00 UTC cron. The `latest` release tag is updated automatically from `main`.
 
 ## Architecture
 
-Fork of [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher) / Amethyst-Android, gutted down to the JVM-hosting path. From upstream:
+Fork of [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher) / Amethyst-Android, gutted down to the JVM-hosting path:
 
-* FCL-Team's OpenJDK 25 for Android (`aarch64`, embedded as a JRE tar.xz in `assets/components/jre-25/`). AngelAuraMC's JDK 17 and 21 both have a JNI handle-list bug in their `libjvm.so` that fires under Cacio's AWT peer calls - FCL-Team is a different OpenJDK port and dodges it.
-* Caciocavallo TTA as the AWT toolkit (no X11)
-* JNI glue that translates Cacio's AWT frame output into a software-rendered bitmap on a `TextureView`
-
-Added or rewritten for RuneLite:
-
-* `RuneLiteLauncherActivity` - downloads the upstream RuneLite JAR on first launch, deduplicates entries, caches it, installs JRE 25, fires the game intent
-* `RuneLiteGameActivity` - fullscreen game-style host, touch → AWT mouse/key mapping, drawer-based menu, foreground-service keepalive, dynamic JFrame resizing on rotation
-* `runelite_audio/` - a `javax.sound.sampled.spi.MixerProvider` on the JVM boot classpath. Per-line ring buffers in Java; one shared AAudio output stream; software mix in a low-priority pump thread. `write()` never blocks the EDT.
-* `runelite_window_agent/` - Java agent loaded via `-javaagent`. Sizes the RuneLite JFrame to the current orientation's visible aspect, repaints the frame at 10 Hz so plugin sidebar icons don't go stale, refocuses the OSRS canvas on each camera drag, and runs a file-based IPC poller for mouse-wheel / right-click / RESIZE / FOCUSGAME events that Cacio's input bridge doesn't handle directly.
+* **FCL-Team's OpenJDK 25** for Android (`aarch64`, bundled as a JRE tar.xz). AngelAuraMC's JDK 17 and 21 both have a JNI handle-list bug in their `libjvm.so` that fires under Cacio's AWT peer calls - FCL-Team is a different OpenJDK port and dodges it.
+* **Caciocavallo TTA** as the AWT toolkit (no X11), with our `TextureView` rendering Cacio's frame buffer as the on-screen surface.
+* **`runelite_audio/`** - `javax.sound.sampled.spi.MixerProvider` on the JVM boot classpath, one shared AAudio output stream with a Java-side software mixer. `write()` never blocks the game thread.
+* **`runelite_window_agent/`** - `-javaagent` loaded into the JVM. Sizes the RuneLite JFrame to the current orientation's visible aspect, periodically repaints to keep plugin sidebar icons fresh, refocuses the OSRS canvas on every camera drag, and runs a file-based IPC poller for mouse-wheel / right-click / FOCUSGAME / RESIZE events.
 
 The `:runelitegame` Android process is separate from `:launcher` and is kept alive by a foreground service so Android doesn't reap the JVM mid-session.
 
