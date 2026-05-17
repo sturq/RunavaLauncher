@@ -86,16 +86,6 @@ jobs:
         run: |
           md5sum out/app-debug.apk > out/app-debug.md5
 
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        # Keep going on storage-quota failures - the rolling release below is
-        # the canonical delivery channel anyway. The artifact is just a
-        # convenience for short-lived per-run downloads.
-        continue-on-error: true
-        with:
-          name: app-debug
-          path: out/app-debug.*
-
       # Rolling "latest" release that always points at the most recent main-branch
       # build. The tag is deleted + recreated each push so the URL stays stable
       # (https://github.com/sturq/runelitedroid/releases/latest). Skipped on PRs.
