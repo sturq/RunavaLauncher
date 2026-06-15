@@ -1,0 +1,21 @@
+name: Mirror to GitLab
+on:
+  push:
+  delete:
+  workflow_dispatch:
+concurrency:
+  group: mirror-gitlab
+  cancel-in-progress: false
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone source mirror
+        run: |
+          git clone --mirror "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" repo.git
+      - name: Push to GitLab
+        env:
+          GL_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git -C repo.git config http.postBuffer 524288000
+          git -C repo.git push --mirror "https://oauth2:${GL_TOKEN}@gitlab.com/Sturq/${{ github.event.repository.name }}.git"
