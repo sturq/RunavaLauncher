@@ -1,0 +1,26 @@
+name: Mirror to GitLab & Codeberg
+on:
+  push:
+  delete:
+  workflow_dispatch:
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone source mirror
+        run: |
+          git clone --mirror "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" repo.git
+          git -C repo.git config http.postBuffer 524288000
+      - name: Push to GitLab
+        env:
+          GL_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          git -C repo.git push --mirror "https://oauth2:${GL_TOKEN}@gitlab.com/Sturq/${{ github.event.repository.name }}.git"
+      - name: Push to Codeberg
+        env:
+          CB_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          git -C repo.git push --mirror "https://sturq:${CB_TOKEN}@codeberg.org/sturq/${{ github.event.repository.name }}.git"
