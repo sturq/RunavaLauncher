@@ -1,4 +1,4 @@
-name: Mirror to GitLab & Codeberg
+name: Mirror to GitLab
 on:
   push:
   delete:
@@ -19,8 +19,3 @@ jobs:
           GL_TOKEN: ${{ secrets.GITLAB_TOKEN }}
         run: |
           git -C repo.git push --mirror "https://oauth2:${GL_TOKEN}@gitlab.com/Sturq/${{ github.event.repository.name }}.git"
-      - name: Push to Codeberg
-        env:
-          CB_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
-        run: |
-          git -C repo.git push --mirror "https://sturq:${CB_TOKEN}@codeberg.org/sturq/${{ github.event.repository.name }}.git"
