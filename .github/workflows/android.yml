@@ -47,15 +47,26 @@ jobs:
       # FCL-Team is a completely different OpenJDK port for Android - at the
       # same offset its libjvm has unrelated code (cbz, harmless), so at minimum
       # the specific bug we keep hitting is structurally not present.
+      # We used to pull the jre25-multiarch CI artifact from
+      # FCL-Team/Android-OpenJDK-Build's build.yml. GitHub deletes Actions
+      # artifacts after ~90 days and that branch is rebuilt only occasionally,
+      # so the artifact aged out and every run (the daily schedule especially)
+      # started dying with "no downloadable artifacts found (expired)".
+      # The identical JRE 25 binpack is committed permanently into the
+      # FoldCraftLauncher repo's assets, so fetch it straight from raw git -
+      # those blobs never expire. We only need arm64 (APP_ABI is arm64-v8a),
+      # so we grab just universal + bin-arm64 + version and skip the others.
       - name: Get JRE25
-        uses: dawidd6/action-download-artifact@v9
-        with:
-          workflow: build.yml
-          path: app_pojavlauncher/src/main/assets/components/jre-25
-          workflow_conclusion: completed
-          repo: FCL-Team/Android-OpenJDK-Build
-          branch: Build_JRE_25
-          name: jre25-multiarch
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/FCL-Team/FoldCraftLauncher/main/FCL/src/main/assets/app_runtime/java/jre25"
+          dest="app_pojavlauncher/src/main/assets/components/jre-25"
+          mkdir -p "$dest"
+          for f in version universal.tar.xz bin-arm64.tar.xz; do
+            curl -fsSL "$base/$f" -o "$dest/$f"
+          done
+          xz -t "$dest/universal.tar.xz" "$dest/bin-arm64.tar.xz"
+          ls -la "$dest"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -66,15 +77,6 @@ jobs:
         run: |
           ./scripts/languagelist_updater.sh
           mkdir out
-
-      - name: Strip unused-arch JRE binaries
-        run: |
-          # arm64-v8a only (see Application.mk APP_ABI). FCL's JRE 25 bundle
-          # ships bin-arm.tar.xz, bin-arm64.tar.xz, bin-x86_64.tar.xz -
-          # we keep arm64 and drop the rest. ~15-20 MB savings.
-          cd app_pojavlauncher/src/main/assets/components/jre-25
-          rm -f bin-arm.tar.xz bin-x86.tar.xz bin-x86_64.tar.xz
-          ls -la
 
       - name: Build Debug .apk
         run: |
