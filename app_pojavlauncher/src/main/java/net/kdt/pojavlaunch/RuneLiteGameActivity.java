@@ -51,7 +51,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     public static final String EXTRA_JAVA_ARGS = "javaArgs";
 
     private AWTCanvasView mCanvas;
-    private SurfaceView mGlSurface;
+    private android.view.TextureView mGlSurface;
     private ImageView mPointer;
     private TouchCharInput mKeyboardInput;
     private DrawerLayout mDrawer;
@@ -189,28 +189,34 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             // rlawt through pojav_environ->pojavWindow. It sits behind the AWT
             // canvas, which stays transparent where Cacio paints nothing.
             mGlSurface.setVisibility(View.VISIBLE);
-            mGlSurface.getHolder().addCallback(new android.view.SurfaceHolder.Callback() {
+            // A TextureView, not a SurfaceView, and for the reason AWTCanvasView
+            // gives a few lines further down: a SurfaceView's surface belongs to
+            // the compositor and is destroyed and recreated freely. It was being
+            // torn down in the same second it appeared, and the pointer rlawt had
+            // then referred to a dead window, which is EGL_BAD_NATIVE_WINDOW out
+            // of eglCreateWindowSurface. A SurfaceTexture belongs to the app and
+            // stays valid as long as we refuse to release it.
+            mGlSurface.setSurfaceTextureListener(new android.view.TextureView.SurfaceTextureListener() {
                 @Override
-                public void surfaceCreated(android.view.SurfaceHolder holder) {
-                    gpuLog("handing the scene surface over");
-                    JREUtils.setupBridgeWindow(holder.getSurface());
+                public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture t, int w, int h) {
+                    gpuLog("scene texture available " + w + "x" + h);
+                    JREUtils.setupBridgeWindow(new android.view.Surface(t));
                     mSceneSurfaceReady.countDown();
                 }
 
                 @Override
-                public void surfaceChanged(android.view.SurfaceHolder h, int f, int w, int ht) { }
+                public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) { }
 
                 @Override
-                public void surfaceDestroyed(android.view.SurfaceHolder holder) {
-                    // Deliberately not released. This surface is destroyed and
-                    // recreated several times while the client starts, and
-                    // releasing clears the pointer rlawt reads: the GPU plugin
-                    // asked during one of those gaps and was told there was no
-                    // surface at all. The next surfaceCreated overwrites it,
-                    // which costs one window reference per recreation and is
-                    // cheaper than the race.
-                    gpuLog("scene surface destroyed, keeping the pointer");
+                public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture t) {
+                    // Keep it. Returning true hands it back to be released, and
+                    // the GL context is still drawing to it.
+                    gpuLog("scene texture destroy refused, keeping it alive");
+                    return false;
                 }
+
+                @Override
+                public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture t) { }
             });
         } else {
             mGlSurface.setVisibility(View.GONE);
