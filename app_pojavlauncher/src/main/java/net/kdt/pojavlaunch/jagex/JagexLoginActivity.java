@@ -13,6 +13,10 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 
+import androidx.webkit.UserAgentMetadata;
+import androidx.webkit.WebSettingsCompat;
+import androidx.webkit.WebViewFeature;
+
 import net.kdt.pojavlaunch.R;
 
 import org.json.JSONArray;
@@ -26,6 +30,10 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.Arrays;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * The Jagex account login, in a WebView, without the desktop Jagex Launcher.
@@ -77,12 +85,7 @@ public class JagexLoginActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
 
-        // Leave the user agent alone. Rewriting it to look like desktop Chrome does
-        // get past the Cloudflare challenge, but Chromium still reports
-        // Sec-CH-UA: "Android WebView", and that contradiction reads as spoofing:
-        // the challenge passes, then POST /api/auth/login/jagex comes back 403 from
-        // a firewall rule. The real Jagex Launcher also logs in through an embedded
-        // browser without disguising it.
+        presentAsChrome(settings);
         Log.i(TAG, "user agent: " + settings.getUserAgentString());
 
         CookieManager.getInstance().setAcceptCookie(true);
@@ -165,6 +168,61 @@ public class JagexLoginActivity extends Activity {
             + "&state=" + enc(mLauncherState)
             + "&code_challenge=" + enc(pkceChallenge(mCodeVerifier))
             + "&code_challenge_method=S256");
+    }
+
+    /**
+     * Make the WebView look like Chrome for Android to Cloudflare.
+     *
+     * Rewriting only the user agent string is not enough and actually makes things
+     * worse: Chromium keeps sending Sec-CH-UA: "Android WebView", the two
+     * contradict each other, and Jagex's firewall answers POST
+     * /api/auth/login/jagex with a flat 403. The user agent client hints have to
+     * agree with the user agent, which is what setUserAgentMetadata is for.
+     *
+     * The Chrome version is taken from the WebView's own user agent so the claim
+     * stays true to the engine actually rendering the page.
+     */
+    private static void presentAsChrome(WebSettings settings) {
+        String defaultUa = settings.getUserAgentString();
+        settings.setUserAgentString(defaultUa
+            .replace("; wv", "")
+            .replace("Version/4.0 ", ""));
+
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
+            Log.w(TAG, "WebView too old for user agent client hints, login may be refused");
+            return;
+        }
+
+        String fullVersion = "0.0.0.0";
+        Matcher m = Pattern.compile("Chrome/(\\d+(?:\\.\\d+)*)").matcher(defaultUa);
+        if (m.find()) fullVersion = m.group(1);
+        String majorVersion = fullVersion.split("\\.")[0];
+
+        List<UserAgentMetadata.BrandVersion> brands = Arrays.asList(
+            brand("Not_A Brand", "99", "99.0.0.0"),
+            brand("Chromium", majorVersion, fullVersion),
+            brand("Google Chrome", majorVersion, fullVersion));
+
+        WebSettingsCompat.setUserAgentMetadata(settings, new UserAgentMetadata.Builder()
+            .setBrandVersionList(brands)
+            .setFullVersion(fullVersion)
+            .setPlatform("Android")
+            .setPlatformVersion(Build.VERSION.RELEASE)
+            .setArchitecture("")
+            .setModel(Build.MODEL)
+            .setMobile(true)
+            .setBitness(UserAgentMetadata.BITNESS_DEFAULT)
+            .setWow64(false)
+            .build());
+        Log.i(TAG, "client hints set to Chrome " + fullVersion);
+    }
+
+    private static UserAgentMetadata.BrandVersion brand(String name, String major, String full) {
+        return new UserAgentMetadata.BrandVersion.Builder()
+            .setBrand(name)
+            .setMajorVersion(major)
+            .setFullVersion(full)
+            .build();
     }
 
     private boolean intercept(String url) {

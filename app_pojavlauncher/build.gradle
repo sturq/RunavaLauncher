@@ -176,6 +176,9 @@ dependencies {
     implementation 'androidx.drawerlayout:drawerlayout:1.2.0'
     implementation 'androidx.viewpager2:viewpager2:1.1.0-beta01'
     implementation 'androidx.annotation:annotation:1.5.0'
+    // Needed to set the WebView's user agent client hints, without which the
+    // Jagex login is refused. See JagexLoginActivity.
+    implementation 'androidx.webkit:webkit:1.12.1'
 
     implementation "androidx.constraintlayout:constraintlayout:2.1.4"
 
