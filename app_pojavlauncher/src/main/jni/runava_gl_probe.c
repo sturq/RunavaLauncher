@@ -15,9 +15,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <dlfcn.h>
+#include <android/native_window.h>
+#include <android/hardware_buffer.h>
+#include <environ/environ.h>
 
-/* egl_bridge.c */
-extern int pojavInit(void);
+/* egl_bridge.c. pojavInit is deliberately not used: it opens by attaching to
+   pojav_environ->runtimeJavaVMPtr, which is only ever set when the JVM itself
+   loads libpojavexec. That happens on the Minecraft path, where LWJGL's GLFW
+   stub pulls it in, and never on the RuneLite one, so the pointer is null and
+   the attach dereferences it. A GL context does not need the JVM anyway. */
+extern int pojavInitOpenGL(void);
 extern void *pojavCreateContext(void *contextSrc);
 extern void pojavMakeCurrent(void *window);
 
@@ -43,10 +50,20 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_probeDesktopGL(JNIEnv *env, jclass clazz
             "renderer name. The activity has to pick a renderer before the JVM starts.");
     }
 
-    if (!pojavInit()) {
-        snprintf(out, sizeof(out), "pojavInit failed (renderer=%s)", renderer);
-        return (*env)->NewStringUTF(env, out);
+    if (pojav_environ->pojavWindow == NULL) {
+        return (*env)->NewStringUTF(env,
+            "no surface: setupBridgeWindow has not been called yet");
     }
+
+    /* The part of pojavInit that actually matters here. */
+    ANativeWindow_acquire(pojav_environ->pojavWindow);
+    pojav_environ->savedWidth = ANativeWindow_getWidth(pojav_environ->pojavWindow);
+    pojav_environ->savedHeight = ANativeWindow_getHeight(pojav_environ->pojavWindow);
+    ANativeWindow_setBuffersGeometry(pojav_environ->pojavWindow,
+                                     pojav_environ->savedWidth,
+                                     pojav_environ->savedHeight,
+                                     AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM);
+    pojavInitOpenGL();
 
     void *ctx = pojavCreateContext(NULL);
     if (ctx == NULL) {

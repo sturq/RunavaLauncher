@@ -360,11 +360,10 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 new Thread(() -> {
                     String result;
                     try {
-                        // The surface exists long before the JVM does, and the
-                        // bridge needs both: the renderer environment, which the
-                        // JVM launch thread sets, and a live runtime VM to attach
-                        // to. Set the environment here so the probe does not
-                        // depend on that ordering, then wait for the VM.
+                        // The surface exists long before the JVM launch thread
+                        // has applied the renderer environment, so set it here
+                        // rather than depending on that ordering. The context
+                        // itself needs no JVM.
                         android.system.Os.setenv("AMETHYST_RENDERER",
                                 "opengles3_desktopgl_zink_kopper", true);
                         if (android.system.Os.getenv("FORCE_VSYNC") == null) {
@@ -372,20 +371,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                         }
                         JREUtils.loadGraphicsLibrary();
 
-                        result = null;
-                        for (int attempt = 0; attempt < 40; attempt++) {
-                            String r = JREUtils.probeDesktopGL();
-                            // pojavInit only succeeds once the JVM is up.
-                            if (!r.startsWith("pojavInit failed")) {
-                                result = r;
-                                break;
-                            }
-                            Thread.sleep(3000L);
-                        }
-                        if (result == null) {
-                            result = "the JVM never came up within two minutes, "
-                                   + "so the bridge had nothing to attach to";
-                        }
+                        result = JREUtils.probeDesktopGL();
                     } catch (Throwable t) {
                         result = "probe threw: " + t;
                     }
