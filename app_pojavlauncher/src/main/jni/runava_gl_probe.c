@@ -61,6 +61,11 @@ Java_net_kdt_pojavlaunch_GlProbe_probeDesktopGL(JNIEnv *env, jclass clazz, jstri
     setenv("MESA_ANDROID_NO_KMS_SWRAST", "1", 1);
     setenv("MESA_GL_VERSION_OVERRIDE", "4.6COMPAT", 1);
     setenv("MESA_GLSL_VERSION_OVERRIDE", "460", 1);
+    /* Mesa logs to logcat, and its own account of why a driver refuses to come
+       up beats guessing at EGL error codes. */
+    setenv("EGL_LOG_LEVEL", "debug", 1);
+    setenv("MESA_DEBUG", "1", 1);
+    setenv("MESA_LOG_LEVEL", "debug", 1);
 
     /* Kopper pulls symbols out of libcutils and zink needs the loader. Both ship
        in the APK, so open them by full path rather than relying on a search path
@@ -80,6 +85,10 @@ Java_net_kdt_pojavlaunch_GlProbe_probeDesktopGL(JNIEnv *env, jclass clazz, jstri
     char vulkanPtr[64];
     snprintf(vulkanPtr, sizeof(vulkanPtr), "%" PRIxPTR, (uintptr_t) vulkan);
     setenv("VULKAN_PTR", vulkanPtr, 1);
+
+    /* The renderer library is what the Minecraft path loads for this renderer,
+       and it may set things up that Mesa expects. Load it first. */
+    open_in(libDir, "libglxshim.so", RTLD_GLOBAL | RTLD_NOW);
 
     void *egl = open_in(libDir, "libEGL_mesa.so", RTLD_GLOBAL | RTLD_NOW);
     if (egl == NULL) {
