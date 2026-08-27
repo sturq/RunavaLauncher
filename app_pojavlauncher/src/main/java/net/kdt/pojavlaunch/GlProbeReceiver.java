@@ -5,8 +5,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
-import net.kdt.pojavlaunch.utils.JREUtils;
-
 import java.io.File;
 import java.io.FileWriter;
 
@@ -34,7 +32,8 @@ public class GlProbeReceiver extends BroadcastReceiver {
         new Thread(() -> {
             String result;
             try {
-                result = JREUtils.probeDesktopGL(app.getApplicationInfo().nativeLibraryDir);
+                GlProbe.ensureLoaded();
+                result = GlProbe.probeDesktopGL(app.getApplicationInfo().nativeLibraryDir);
             } catch (Throwable t) {
                 result = "probe threw: " + t;
             }

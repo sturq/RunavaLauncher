@@ -564,10 +564,6 @@ public class JREUtils {
     public static native void initializeHooks();
     public static native void setupExitMethod(Context context);
     // Obtain AWT screen pixels to render on Android SurfaceView
-    /** One-shot check of whether this device can give RuneLite's GPU plugin the
-     *  desktop GL context it needs. Not part of any render path. */
-    public static native String probeDesktopGL(String nativeLibraryDir);
-
     /** Hand the AWT renderer the surface to write into, or null to let go of it. */
     public static native void setAWTSurface(android.view.Surface surface);
 

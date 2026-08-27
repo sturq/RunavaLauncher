@@ -49,7 +49,7 @@ static void *open_in(const char *dir, const char *name, int flags) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_net_kdt_pojavlaunch_utils_JREUtils_probeDesktopGL(JNIEnv *env, jclass clazz, jstring jLibDir) {
+Java_net_kdt_pojavlaunch_GlProbe_probeDesktopGL(JNIEnv *env, jclass clazz, jstring jLibDir) {
     char out[1400];
     const char *libDir = (*env)->GetStringUTFChars(env, jLibDir, NULL);
 
