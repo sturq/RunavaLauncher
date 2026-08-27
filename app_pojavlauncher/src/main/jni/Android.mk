@@ -59,6 +59,17 @@ LOCAL_LDFLAGS := -z global
 include $(BUILD_SHARED_LIBRARY)
 #endif
 
+# RuneLite's GPU plugin loads this through -Drunelite.rlawtpath. It implements
+# the same JNI contract as upstream rlawt, against a Surface instead of an X11
+# Drawable.
+include $(CLEAR_VARS)
+LOCAL_MODULE := rlawt
+LOCAL_LDLIBS := -landroid -llog -ldl
+LOCAL_SHARED_LIBRARIES := pojavexec
+LOCAL_SRC_FILES := \
+    rlawt_android.c
+include $(BUILD_SHARED_LIBRARY)
+
 include $(CLEAR_VARS)
 LOCAL_MODULE := pojavexec_awt
 # -landroid for ANativeWindow: the AWT frame is written straight into the
