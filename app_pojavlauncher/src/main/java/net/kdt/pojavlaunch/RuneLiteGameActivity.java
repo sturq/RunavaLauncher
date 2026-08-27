@@ -346,22 +346,54 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     }
 
     /**
-     * Turn "-jar X" into "-cp extra:X net.runelite.launcher.Launcher", so extra
-     * jars can be put ahead of RuneLite's own. With -jar the class path is
-     * ignored entirely, which leaves no way to override what RuneLite ships.
+     * Skip RuneLite's launcher and start the client itself.
+     *
+     * The launcher resolves its own dependency set and loads the client through
+     * its own class loader, so whatever LWJGL we put on the command line loses.
+     * Its LWJGL is stock, built for desktop Linux, and cannot load here. But it
+     * has already downloaded every artifact into .runelite/repository2, so the
+     * class path can simply be assembled from those, minus LWJGL, with Pojav's
+     * Android build in its place.
+     *
+     * Leaves the arguments untouched and returns false if anything is missing,
+     * so a half-built class path never replaces a working launch.
      */
-    private void swapJarForClasspath(List<String> args, String extraClasspath) {
-        if (extraClasspath == null) return;
+    private boolean launchClientDirectly(List<String> args) {
+        String lwjgl = pojavLwjglJars();
+        if (lwjgl == null) return false;
+
+        File repo = new File(getExternalFilesDir(null), ".runelite/repository2");
+        File[] jars = repo.listFiles((d, name) -> name.endsWith(".jar"));
+        if (jars == null || jars.length == 0) {
+            Log.w("RuneLiteGame", "no artifacts in " + repo + "; leaving the launcher alone");
+            return false;
+        }
+
+        StringBuilder cp = new StringBuilder(lwjgl);
+        int skipped = 0;
+        for (File jar : jars) {
+            // RuneLite's own LWJGL is the thing being replaced.
+            if (jar.getName().startsWith("lwjgl-")) {
+                skipped++;
+                continue;
+            }
+            cp.append(':').append(jar.getAbsolutePath());
+        }
+
         int i = args.indexOf("-jar");
         if (i < 0 || i + 1 >= args.size()) {
-            Log.w("RuneLiteGame", "no -jar argument to rewrite; leaving the class path alone");
-            return;
+            Log.w("RuneLiteGame", "no -jar argument to replace");
+            return false;
         }
-        String jar = args.get(i + 1);
-        args.set(i, "-cp");
-        args.set(i + 1, extraClasspath + ":" + jar);
-        args.add(i + 2, "net.runelite.launcher.Launcher");
-        Log.i("RuneLiteGame", "GPU mode: class path now " + extraClasspath + ":" + jar);
+        // Everything after the jar is launcher arguments the client does not take.
+        while (args.size() > i) args.remove(args.size() - 1);
+        args.add("-cp");
+        args.add(cp.toString());
+        args.add("net.runelite.client.RuneLite");
+
+        Log.i("RuneLiteGame", "GPU mode: starting the client directly, "
+                + (jars.length - skipped) + " artifacts, " + skipped + " LWJGL jars replaced");
+        return true;
     }
 
     /** Pojav's Android build of LWJGL, as a classpath string, or null if it is
@@ -912,7 +944,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                     // RuneLite's, not on the boot classpath: boot classes have no
                     // class loader, and LWJGL looks its natives up through one, so
                     // that route ends in a NullPointerException in findResource.
-                    swapJarForClasspath(argList, pojavLwjglJars());
+                    launchClientDirectly(argList);
                 }
                 javaArgList.add("-XX:+IgnoreUnrecognizedVMOptions");
                 javaArgList.add("-XX:Tier4MinInvocationThreshold=150");
