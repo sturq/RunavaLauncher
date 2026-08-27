@@ -281,6 +281,17 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             mLogger.setVisibility(View.VISIBLE);
             mDrawer.closeDrawers();
         });
+        findViewById(R.id.rl_btn_jagex_logout).setOnClickListener(v -> {
+            mDrawer.closeDrawers();
+            new android.app.AlertDialog.Builder(this)
+                .setMessage(R.string.jagex_log_out_confirm)
+                .setPositiveButton(android.R.string.ok, (d, w) -> {
+                    net.kdt.pojavlaunch.jagex.JagexAccount.clear(this);
+                    Tools.dialogForceClose(this);
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+        });
         findViewById(R.id.rl_btn_force_close).setOnClickListener(v -> {
             mDrawer.closeDrawers();
             Tools.dialogForceClose(this);

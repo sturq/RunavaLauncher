@@ -213,6 +213,10 @@ public class JREUtils {
 
         envMap.put("LD_LIBRARY_PATH", LD_LIBRARY_PATH);
         envMap.put("PATH", jreHome + "/bin:" + Os.getenv("PATH"));
+
+        // Jagex account credentials. The OSRS gamepack reads these with
+        // System.getenv, so they have to be in place before the JVM starts.
+        net.kdt.pojavlaunch.jagex.JagexAccount.putEnv(activity, envMap);
         if(FFmpegPlugin.isAvailable) {
             envMap.put("POJAV_FFMPEG_PATH", FFmpegPlugin.executablePath);
         }
