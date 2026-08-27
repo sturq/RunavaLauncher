@@ -32,6 +32,7 @@ LOCAL_SRC_FILES := \
     jvm_hooks/lwjgl_dlopen_hook.c \
     input_bridge_v3.c \
     jre_launcher.c \
+    runava_gl_probe.c \
     utils.c \
     stdio_is.c \
     driver_helper/nsbypass.c

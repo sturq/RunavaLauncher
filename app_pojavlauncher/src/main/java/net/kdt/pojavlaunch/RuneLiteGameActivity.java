@@ -164,17 +164,31 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         mDrawer = findViewById(R.id.rl_drawer);
         mLogger = findViewById(R.id.rl_logger);
 
-        // rl_gl_surface was wired up for the GPU-plugin / hybrid GL plan, then
-        // we abandoned that path (no librlawt.so on Android). The Cacio software
-        // renderer doesn't need a Surface — AWTCanvasView reads the frame buffer
-        // directly via JREUtils.renderAWTScreenFrame(). Keeping the GL surface's
-        // SurfaceHolder.Callback alive caused setupBridgeWindow(Surface) to fire
-        // on every background → resume transition, which calls
-        // ANativeWindow_fromSurface but never releases the previous reference.
-        // That stale window leak is a strong candidate for the libjvm SIGSEGV
-        // we keep hitting when the user switches apps. We just hide the view
-        // entirely and skip the callback registration — Cacio doesn't care.
-        mGlSurface.setVisibility(View.GONE);
+        // rl_gl_surface was wired up for the GPU-plugin / hybrid GL plan, which
+        // was abandoned on the grounds that there is no librlawt.so for Android.
+        // That reasoning is being revisited: the APK already ships zink over
+        // Vulkan, libglxshim.so for the GLX entry points rlawt calls, and Mesa
+        // EGL, and the zink path already asks Mesa for 4.6COMPAT, which is above
+        // the 4.3 the GPU plugin needs for its compute shaders. What is missing
+        // is a librlawt built against a Surface instead of an X11 Drawable.
+        //
+        // "GL probe" in the drawer arms that measurement for the next launch, so
+        // the port gets decided on what the device reports rather than on what
+        // the APK contains. Outside of a probe run the surface stays hidden: the
+        // software renderer does not need one, since AWTCanvasView takes the
+        // frame straight off the AWT side.
+        //
+        // Note for whoever wires this up for real: leaving the GL surface's
+        // SurfaceHolder.Callback registered used to fire setupBridgeWindow on
+        // every background/resume, and that path calls ANativeWindow_fromSurface
+        // without ever releasing the previous reference. The resulting leak was
+        // once blamed for the libjvm SIGSEGV, which turned out to be Memory
+        // Tagging instead, but the leak is real and still needs a release.
+        if (glProbeArmed()) {
+            armGlProbe();
+        } else {
+            mGlSurface.setVisibility(View.GONE);
+        }
 
         MainActivity.GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         mKeyboardInput.setCharacterSender(new AwtCharSender());
@@ -280,6 +294,29 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             mLogger.setVisibility(View.VISIBLE);
             mDrawer.closeDrawers();
         });
+        findViewById(R.id.rl_btn_gl_probe).setOnClickListener(v -> {
+            mDrawer.closeDrawers();
+            boolean armed = !glProbeArmed();
+            if (armed) {
+                try {
+                    //noinspection ResultOfMethodCallIgnored
+                    glProbeMarker().createNewFile();
+                } catch (IOException e) {
+                    Toast.makeText(this, "could not arm the probe: " + e, Toast.LENGTH_LONG).show();
+                    return;
+                }
+            } else {
+                //noinspection ResultOfMethodCallIgnored
+                glProbeMarker().delete();
+            }
+            new android.app.AlertDialog.Builder(this)
+                .setMessage(armed
+                    ? "GL probe armed. Close the game and start it again: it will bring up the"
+                      + " desktop GL stack and report what this device gives back."
+                    : "GL probe disarmed. The next launch is a normal one.")
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
+        });
         findViewById(R.id.rl_btn_jagex_logout).setOnClickListener(v -> {
             mDrawer.closeDrawers();
             new android.app.AlertDialog.Builder(this)
@@ -294,6 +331,56 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         findViewById(R.id.rl_btn_force_close).setOnClickListener(v -> {
             mDrawer.closeDrawers();
             Tools.dialogForceClose(this);
+        });
+    }
+
+    // --- GL probe -------------------------------------------------------
+    // Armed by a marker file rather than a live toggle, because the renderer has
+    // to be chosen before the JVM starts and the JVM outlives this activity.
+
+    private java.io.File glProbeMarker() {
+        return new java.io.File(getFilesDir(), "gl-probe");
+    }
+
+    private boolean glProbeArmed() {
+        return glProbeMarker().exists();
+    }
+
+    /** Show the GL surface and, once it exists, ask the bridge what it can give us. */
+    private void armGlProbe() {
+        mGlSurface.setVisibility(View.VISIBLE);
+        mGlSurface.getHolder().addCallback(new android.view.SurfaceHolder.Callback() {
+            private boolean done;
+
+            @Override
+            public void surfaceCreated(android.view.SurfaceHolder holder) {
+                if (done) return;
+                done = true;
+                JREUtils.setupBridgeWindow(holder.getSurface());
+                new Thread(() -> {
+                    String result;
+                    try {
+                        result = JREUtils.probeDesktopGL();
+                    } catch (Throwable t) {
+                        result = "probe threw: " + t;
+                    }
+                    Log.i("RuneLiteGame", "GL probe:\n" + result);
+                    final String shown = result;
+                    mUiHandler.post(() -> new android.app.AlertDialog.Builder(RuneLiteGameActivity.this)
+                        .setTitle("GL probe")
+                        .setMessage(shown)
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show());
+                }, "GLProbe").start();
+            }
+
+            @Override
+            public void surfaceChanged(android.view.SurfaceHolder holder, int f, int w, int h) { }
+
+            @Override
+            public void surfaceDestroyed(android.view.SurfaceHolder holder) {
+                JREUtils.releaseBridgeWindow();
+            }
         });
     }
 
@@ -725,6 +812,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // OpenAL compat patcher for Minecraft mods, doesn't apply to RuneLite,
         // and installs a ClassFileTransformer that runs on every class load.
         System.setProperty("pojav.skip.methodsInjector", "1");
+        // Picking a renderer has to happen before the JVM environment is built:
+        // it decides both AMETHYST_RENDERER and which graphics library gets
+        // dlopen'd. Only for a probe run, so a normal launch keeps the process
+        // free of the GL stack entirely.
+        if (glProbeArmed()) {
+            Tools.LOCAL_RENDERER = "opengles3_desktopgl_zink_kopper";
+            Log.i("RuneLiteGame", "GL probe armed, renderer=" + Tools.LOCAL_RENDERER);
+        }
         new Thread(() -> {
             try {
                 JREUtils.redirectAndPrintJRELog();
