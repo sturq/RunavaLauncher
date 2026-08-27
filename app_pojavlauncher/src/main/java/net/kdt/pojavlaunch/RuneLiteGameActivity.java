@@ -338,6 +338,16 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     // Armed by a marker file rather than a live toggle, because the renderer has
     // to be chosen before the JVM starts and the JVM outlives this activity.
 
+    private static void setenvIfUnset(String name, String value) {
+        try {
+            if (android.system.Os.getenv(name) == null) {
+                android.system.Os.setenv(name, value, true);
+            }
+        } catch (Throwable t) {
+            Log.w("RuneLiteGame", "could not set " + name, t);
+        }
+    }
+
     private java.io.File glProbeMarker() {
         return new java.io.File(getFilesDir(), "gl-probe");
     }
@@ -364,11 +374,18 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                         // has applied the renderer environment, so set it here
                         // rather than depending on that ordering. The context
                         // itself needs no JVM.
+                        // The bridge reads several of these with getenv and hands
+                        // the result straight to strcmp or strtol, so an unset one
+                        // is a null dereference rather than a default.
                         android.system.Os.setenv("AMETHYST_RENDERER",
                                 "opengles3_desktopgl_zink_kopper", true);
-                        if (android.system.Os.getenv("FORCE_VSYNC") == null) {
-                            android.system.Os.setenv("FORCE_VSYNC", "false", true);
-                        }
+                        setenvIfUnset("FORCE_VSYNC", "false");
+                        setenvIfUnset("LIBGL_ES", "3");
+                        setenvIfUnset("POJAVEXEC_EGL", "libEGL_mesa.so");
+                        setenvIfUnset("MESA_LOADER_DRIVER_OVERRIDE", "zink");
+                        setenvIfUnset("GALLIUM_DRIVER", "zink");
+                        setenvIfUnset("MESA_GL_VERSION_OVERRIDE", "4.6COMPAT");
+                        setenvIfUnset("MESA_GLSL_VERSION_OVERRIDE", "460");
                         JREUtils.loadGraphicsLibrary();
 
                         result = JREUtils.probeDesktopGL();
