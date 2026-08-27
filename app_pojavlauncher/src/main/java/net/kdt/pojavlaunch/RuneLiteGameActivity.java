@@ -345,6 +345,37 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
     }
 
+    /** Copy the Android LWJGL natives out of the APK once, and return where they
+     *  landed. Null if they are not there to copy. */
+    private File unpackLwjglNatives() {
+        String assetDir = "components/lwjgl-3.3.3-natives/"
+                + Architecture.archAsStringAndroid(Tools.DEVICE_ARCHITECTURE);
+        File out = new File(getFilesDir(), "lwjgl-natives");
+        try {
+            String[] names = getAssets().list(assetDir);
+            if (names == null || names.length == 0) {
+                Log.w("RuneLiteGame", "no LWJGL natives at " + assetDir);
+                return null;
+            }
+            //noinspection ResultOfMethodCallIgnored
+            out.mkdirs();
+            for (String name : names) {
+                File target = new File(out, name);
+                if (target.exists() && target.length() > 0) continue;
+                try (java.io.InputStream in = getAssets().open(assetDir + "/" + name);
+                     java.io.FileOutputStream os = new java.io.FileOutputStream(target)) {
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+                }
+            }
+            return out;
+        } catch (Throwable t) {
+            Log.w("RuneLiteGame", "could not unpack the LWJGL natives", t);
+            return null;
+        }
+    }
+
     /** GPU mode is opt-in while it is being brought up, so a broken experiment
      *  cannot take the working software path with it. Toggled by creating or
      *  deleting "gpu" in the app's external files directory. */
@@ -819,6 +850,21 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                     File rlawt = new File(getApplicationInfo().nativeLibraryDir, "librlawt.so");
                     javaArgList.add("-Drunelite.rlawtpath=" + rlawt.getAbsolutePath());
                     Log.i("RuneLiteGame", "GPU mode: rlawt=" + rlawt + " exists=" + rlawt.exists());
+
+                    // RuneLite ships its own LWJGL and unpacks it on demand, but
+                    // that is a desktop Linux build linked against libpthread.so.0,
+                    // which does not exist on Android because bionic keeps pthreads
+                    // in libc. It dies with UnsatisfiedLinkError before the GPU
+                    // plugin gets anywhere. Point LWJGL at the Android natives that
+                    // ship in this APK instead.
+                    File lwjgl = unpackLwjglNatives();
+                    if (lwjgl != null) {
+                        javaArgList.add("-Dorg.lwjgl.librarypath=" + lwjgl.getAbsolutePath());
+                        Log.i("RuneLiteGame", "GPU mode: lwjgl natives=" + lwjgl);
+                    }
+                    // And its GL entry points come from the zink/GLX shim, not from
+                    // a system libGL that Android does not have.
+                    javaArgList.add("-Dorg.lwjgl.opengl.libname=libglxshim.so");
                 }
                 javaArgList.add("-XX:+IgnoreUnrecognizedVMOptions");
                 javaArgList.add("-XX:Tier4MinInvocationThreshold=150");
