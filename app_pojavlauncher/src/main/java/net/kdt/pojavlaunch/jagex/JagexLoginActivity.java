@@ -77,14 +77,12 @@ public class JagexLoginActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
 
-        // account.jagex.com sits behind a Cloudflare bot challenge that fails a
-        // stock WebView: the default user agent carries "; wv" and "Version/4.0",
-        // both of which mark it as embedded. Patch those two tokens out of the
-        // real user agent rather than inventing one, so the Chrome version keeps
-        // matching the client hints the same WebView sends.
-        settings.setUserAgentString(settings.getUserAgentString()
-            .replace("; wv", "")
-            .replace("Version/4.0 ", ""));
+        // Leave the user agent alone. Rewriting it to look like desktop Chrome does
+        // get past the Cloudflare challenge, but Chromium still reports
+        // Sec-CH-UA: "Android WebView", and that contradiction reads as spoofing:
+        // the challenge passes, then POST /api/auth/login/jagex comes back 403 from
+        // a firewall rule. The real Jagex Launcher also logs in through an embedded
+        // browser without disguising it.
         Log.i(TAG, "user agent: " + settings.getUserAgentString());
 
         CookieManager.getInstance().setAcceptCookie(true);
