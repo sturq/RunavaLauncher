@@ -20,5 +20,5 @@ public final class GlProbe {
         loaded = true;
     }
 
-    public static native String probeDesktopGL(String nativeLibraryDir);
+    public static native String probeDesktopGL(String nativeLibraryDir, android.view.Surface surface);
 }

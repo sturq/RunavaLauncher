@@ -31,9 +31,17 @@ public class GlProbeService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         new Thread(() -> {
             String result;
+            android.media.ImageReader reader = null;
             try {
                 GlProbe.ensureLoaded();
-                result = GlProbe.probeDesktopGL(getApplicationInfo().nativeLibraryDir);
+                // A real window without anything on screen. This Mesa is the
+                // kopper build of zink, whose WSI layer expects a window and
+                // crashes without one, but an ImageReader's surface is never
+                // displayed, so the probe still needs no activity.
+                reader = android.media.ImageReader.newInstance(
+                        64, 64, android.graphics.PixelFormat.RGBA_8888, 2);
+                result = GlProbe.probeDesktopGL(
+                        getApplicationInfo().nativeLibraryDir, reader.getSurface());
             } catch (Throwable t) {
                 result = "probe threw: " + t;
             }
@@ -47,6 +55,7 @@ public class GlProbeService extends Service {
             } catch (Throwable t) {
                 Log.w(TAG, "could not write the result", t);
             }
+            if (reader != null) reader.close();
             stopSelf();
         }, "GLProbe").start();
         return START_NOT_STICKY;

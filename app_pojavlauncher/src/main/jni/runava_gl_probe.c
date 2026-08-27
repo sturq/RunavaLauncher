@@ -22,6 +22,8 @@
 #include <dlfcn.h>
 #include <inttypes.h>
 #include <EGL/egl.h>
+#include <android/native_window.h>
+#include <android/native_window_jni.h>
 
 #define GL_VENDOR                   0x1F00
 #define GL_RENDERER                 0x1F01
@@ -35,6 +37,7 @@ typedef EGLBoolean (*fn_bindAPI)(EGLenum);
 typedef EGLBoolean (*fn_chooseConfig)(EGLDisplay, const EGLint *, EGLConfig *, EGLint, EGLint *);
 typedef EGLContext (*fn_createContext)(EGLDisplay, EGLConfig, EGLContext, const EGLint *);
 typedef EGLSurface (*fn_createPbuffer)(EGLDisplay, EGLConfig, const EGLint *);
+typedef EGLSurface (*fn_createWindow)(EGLDisplay, EGLConfig, EGLNativeWindowType, const EGLint *);
 typedef EGLBoolean (*fn_makeCurrent)(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
 typedef EGLint (*fn_getError)(void);
 typedef void *(*fn_getProcAddress)(const char *);
@@ -50,7 +53,7 @@ static void *open_in(const char *dir, const char *name, int flags) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_net_kdt_pojavlaunch_GlProbe_probeDesktopGL(JNIEnv *env, jclass clazz, jstring jLibDir) {
+Java_net_kdt_pojavlaunch_GlProbe_probeDesktopGL(JNIEnv *env, jclass clazz, jstring jLibDir, jobject surface) {
     char out[1400];
     const char *libDir = (*env)->GetStringUTFChars(env, jLibDir, NULL);
 
@@ -108,6 +111,7 @@ Java_net_kdt_pojavlaunch_GlProbe_probeDesktopGL(JNIEnv *env, jclass clazz, jstri
     fn_chooseConfig  p_eglChooseConfig        = (fn_chooseConfig)  dlsym(egl, "eglChooseConfig");
     fn_createContext p_eglCreateContext       = (fn_createContext) dlsym(egl, "eglCreateContext");
     fn_createPbuffer p_eglCreatePbufferSurface= (fn_createPbuffer) dlsym(egl, "eglCreatePbufferSurface");
+    fn_createWindow  p_eglCreateWindowSurface  = (fn_createWindow)  dlsym(egl, "eglCreateWindowSurface");
     fn_makeCurrent   p_eglMakeCurrent         = (fn_makeCurrent)   dlsym(egl, "eglMakeCurrent");
     fn_getError      p_eglGetError            = (fn_getError)      dlsym(egl, "eglGetError");
     fn_getProcAddress p_eglGetProcAddress     = (fn_getProcAddress)dlsym(egl, "eglGetProcAddress");
@@ -141,7 +145,7 @@ Java_net_kdt_pojavlaunch_GlProbe_probeDesktopGL(JNIEnv *env, jclass clazz, jstri
     }
 
     const EGLint configAttrs[] = {
-        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
         EGL_DEPTH_SIZE, 24,
         EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
@@ -176,8 +180,19 @@ Java_net_kdt_pojavlaunch_GlProbe_probeDesktopGL(JNIEnv *env, jclass clazz, jstri
         goto done;
     }
 
-    const EGLint pbufAttrs[] = { EGL_WIDTH, 16, EGL_HEIGHT, 16, EGL_NONE };
-    EGLSurface surf = p_eglCreatePbufferSurface(dpy, config, pbufAttrs);
+    /* A real window, because this is the kopper build of zink and its WSI layer
+       expects one. It comes from an ImageReader, so it is a genuine
+       ANativeWindow that is never displayed: no activity, no unlocked screen. */
+    ANativeWindow *win = ANativeWindow_fromSurface(env, surface);
+    if (win == NULL) {
+        snprintf(out, sizeof(out), "could not get a native window from the surface");
+        goto done;
+    }
+    EGLSurface surf = p_eglCreateWindowSurface(dpy, config, (EGLNativeWindowType) win, NULL);
+    if (surf == EGL_NO_SURFACE) {
+        snprintf(out, sizeof(out), "eglCreateWindowSurface failed: 0x%04x", p_eglGetError());
+        goto done;
+    }
     if (!p_eglMakeCurrent(dpy, surf, surf, ctx)) {
         snprintf(out, sizeof(out), "eglMakeCurrent failed: 0x%04x", p_eglGetError());
         goto done;
