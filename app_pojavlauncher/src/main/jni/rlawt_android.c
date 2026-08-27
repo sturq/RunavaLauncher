@@ -88,8 +88,20 @@ typedef struct {
     int insetX, insetY;
 } AndroidAWTContext;
 
+/* logcat overflows during a client startup, so anything worth reading also goes
+   to the file the launcher points at. */
+static void rlawtNote(const char *msg) {
+    const char *path = getenv("RUNAVA_RLAWT_LOG");
+    if (path == NULL) return;
+    FILE *f = fopen(path, "a");
+    if (f == NULL) return;
+    fprintf(f, "          rlawt: %s\n", msg);
+    fclose(f);
+}
+
 static void rlawtThrow(JNIEnv *env, const char *msg) {
     LOGE("%s", msg);
+    rlawtNote(msg);
     jclass clazz = (*env)->FindClass(env, "java/lang/RuntimeException");
     if (clazz != NULL) (*env)->ThrowNew(env, clazz, msg);
 }
@@ -328,6 +340,7 @@ Java_net_runelite_rlawt_AWTContext_createGLContext(JNIEnv *env, jobject self) {
         return;
     }
     LOGI("GL context up and current, EGL %d.%d", major, minor);
+    rlawtNote("GL context up and current");
 }
 
 JNIEXPORT jint JNICALL

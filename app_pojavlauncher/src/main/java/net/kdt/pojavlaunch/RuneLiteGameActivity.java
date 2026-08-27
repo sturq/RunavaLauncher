@@ -192,9 +192,9 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             mGlSurface.getHolder().addCallback(new android.view.SurfaceHolder.Callback() {
                 @Override
                 public void surfaceCreated(android.view.SurfaceHolder holder) {
-                    Log.i("RuneLiteGame", "GPU mode: handing the scene surface over");
+                    gpuLog("handing the scene surface over");
                     JREUtils.setupBridgeWindow(holder.getSurface());
-                    sSceneSurfaceReady.countDown();
+                    mSceneSurfaceReady.countDown();
                 }
 
                 @Override
@@ -401,8 +401,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
 
         args.add("--classpath");
         args.add(cp.toString());
-        Log.i("RuneLiteGame", "GPU mode: launcher class path set, "
-                + replaced + " LWJGL jars replaced");
+        gpuLog("launcher class path set, " + replaced + " LWJGL jars replaced");
         return true;
     }
 
@@ -422,7 +421,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             lwjglVersion = version;
             StringBuilder cp = new StringBuilder(core.getAbsolutePath());
             if (modules.exists()) cp.append(':').append(modules.getAbsolutePath());
-            Log.i("RuneLiteGame", "GPU mode: using Pojav LWJGL " + version);
+            gpuLog("using Pojav LWJGL " + version);
             return cp.toString();
         }
         Log.w("RuneLiteGame", "no Pojav LWJGL found");
@@ -466,8 +465,20 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
      *  SurfaceView only gets its surface once it has been laid out, which was
      *  two minutes later: rlawt was asked for a context before there was
      *  anything to draw on. */
-    private static final java.util.concurrent.CountDownLatch sSceneSurfaceReady =
+    private final java.util.concurrent.CountDownLatch mSceneSurfaceReady =
             new java.util.concurrent.CountDownLatch(1);
+
+    /** logcat overflows during a client startup and drops exactly the lines worth
+     *  reading, so the GPU bring-up keeps its own file. */
+    private void gpuLog(String message) {
+        Log.i("RuneLiteGame", message);
+        try (java.io.FileWriter w = new java.io.FileWriter(
+                new java.io.File(getExternalFilesDir(null), "gpu.log"), true)) {
+            w.write(new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date()) + "  " + message + "\n");
+        } catch (Throwable ignored) {
+        }
+    }
 
     /** GPU mode is opt-in while it is being brought up, so a broken experiment
      *  cannot take the working software path with it. Toggled by creating or
@@ -909,10 +920,10 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 if (gpuModeEnabled()) {
                     // Nothing may start before the scene surface exists, or the
                     // GPU plugin asks for a context there is no window for.
-                    if (!sSceneSurfaceReady.await(30, java.util.concurrent.TimeUnit.SECONDS)) {
-                        Log.w("RuneLiteGame", "scene surface never arrived; starting anyway");
+                    if (!mSceneSurfaceReady.await(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                        gpuLog("scene surface never arrived after 30s; starting anyway");
                     } else {
-                        Log.i("RuneLiteGame", "scene surface ready, starting the JVM");
+                        gpuLog("scene surface ready, starting the JVM");
                     }
                 }
                 JREUtils.redirectAndPrintJRELog();
@@ -949,6 +960,11 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 if (gpuModeEnabled()) {
                     // Upstream rlawt honours this, so RuneLite loads our Android
                     // backend without needing any patch of its own.
+                    try {
+                        android.system.Os.setenv("RUNAVA_RLAWT_LOG",
+                                new File(getExternalFilesDir(null), "gpu.log").getAbsolutePath(), true);
+                    } catch (Throwable ignored) {
+                    }
                     File rlawt = new File(getApplicationInfo().nativeLibraryDir, "librlawt.so");
                     javaArgList.add("-Drunelite.rlawtpath=" + rlawt.getAbsolutePath());
                     Log.i("RuneLiteGame", "GPU mode: rlawt=" + rlawt + " exists=" + rlawt.exists());
