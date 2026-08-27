@@ -184,11 +184,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // without ever releasing the previous reference. The resulting leak was
         // once blamed for the libjvm SIGSEGV, which turned out to be Memory
         // Tagging instead, but the leak is real and still needs a release.
-        if (glProbeArmed()) {
-            armGlProbe();
-        } else {
-            mGlSurface.setVisibility(View.GONE);
-        }
+        mGlSurface.setVisibility(View.GONE);
 
         MainActivity.GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         mKeyboardInput.setCharacterSender(new AwtCharSender());
@@ -296,26 +292,9 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         });
         findViewById(R.id.rl_btn_gl_probe).setOnClickListener(v -> {
             mDrawer.closeDrawers();
-            boolean armed = !glProbeArmed();
-            if (armed) {
-                try {
-                    //noinspection ResultOfMethodCallIgnored
-                    glProbeMarker().createNewFile();
-                } catch (IOException e) {
-                    Toast.makeText(this, "could not arm the probe: " + e, Toast.LENGTH_LONG).show();
-                    return;
-                }
-            } else {
-                //noinspection ResultOfMethodCallIgnored
-                glProbeMarker().delete();
-            }
-            new android.app.AlertDialog.Builder(this)
-                .setMessage(armed
-                    ? "GL probe armed. Close the game and start it again: it will bring up the"
-                      + " desktop GL stack and report what this device gives back."
-                    : "GL probe disarmed. The next launch is a normal one.")
-                .setPositiveButton(android.R.string.ok, null)
-                .show();
+            Toast.makeText(this, "Bringing up the GL stack, this takes a moment",
+                    Toast.LENGTH_SHORT).show();
+            armGlProbe();
         });
         findViewById(R.id.rl_btn_jagex_logout).setOnClickListener(v -> {
             mDrawer.closeDrawers();
@@ -348,15 +327,13 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
     }
 
-    private java.io.File glProbeMarker() {
-        return new java.io.File(getFilesDir(), "gl-probe");
-    }
-
-    private boolean glProbeArmed() {
-        return glProbeMarker().exists();
-    }
-
-    /** Show the GL surface and, once it exists, ask the bridge what it can give us. */
+    /** Show the GL surface and, once it exists, ask the bridge what it can give us.
+     *
+     *  Run from the drawer rather than at startup, and deliberately so: every
+     *  earlier attempt failed because it ran before the JVM launch thread had
+     *  applied the environment the bridge reads with getenv, or set the
+     *  LD_LIBRARY_PATH its loader searches. By the time this button can be
+     *  pressed, all of that is in place. */
     private void armGlProbe() {
         mGlSurface.setVisibility(View.VISIBLE);
         mGlSurface.getHolder().addCallback(new android.view.SurfaceHolder.Callback() {
@@ -862,14 +839,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // OpenAL compat patcher for Minecraft mods, doesn't apply to RuneLite,
         // and installs a ClassFileTransformer that runs on every class load.
         System.setProperty("pojav.skip.methodsInjector", "1");
-        // Picking a renderer has to happen before the JVM environment is built:
-        // it decides both AMETHYST_RENDERER and which graphics library gets
-        // dlopen'd. Only for a probe run, so a normal launch keeps the process
-        // free of the GL stack entirely.
-        if (glProbeArmed()) {
-            Tools.LOCAL_RENDERER = "opengles3_desktopgl_zink_kopper";
-            Log.i("RuneLiteGame", "GL probe armed, renderer=" + Tools.LOCAL_RENDERER);
-        }
         new Thread(() -> {
             try {
                 JREUtils.redirectAndPrintJRELog();
