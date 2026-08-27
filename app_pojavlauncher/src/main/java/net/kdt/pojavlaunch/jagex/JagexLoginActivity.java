@@ -229,6 +229,22 @@ public class JagexLoginActivity extends Activity {
                 });
                 return;
             }
+            // The launcher leg asks for the gamesso.token.create scope, so try
+            // trading its id_token for a game session directly. If that is
+            // refused we still have to go through the consent step, which needs
+            // the login cookie and therefore the browser.
+            try {
+                JSONObject session = new JSONObject(postJson(SESSIONS_URL, null,
+                    new JSONObject().put("idToken", idToken).toString()));
+                final String sessionId = session.getString("sessionId");
+                Log.i(TAG, "game session created straight from the launcher token");
+                JSONArray accounts = new JSONArray(get(ACCOUNTS_URL, sessionId));
+                if (accounts.length() == 0) throw new IllegalStateException("account has no characters");
+                runOnUiThread(() -> chooseCharacter(sessionId, accounts));
+                return;
+            } catch (Exception e) {
+                Log.w(TAG, "launcher token not accepted for a game session, needs consent: " + e);
+            }
             runOnUiThread(() -> startConsent(idToken));
         });
         return true;
