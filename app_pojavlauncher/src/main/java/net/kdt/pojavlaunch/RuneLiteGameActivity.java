@@ -194,6 +194,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 public void surfaceCreated(android.view.SurfaceHolder holder) {
                     Log.i("RuneLiteGame", "GPU mode: handing the scene surface over");
                     JREUtils.setupBridgeWindow(holder.getSurface());
+                    sSceneSurfaceReady.countDown();
                 }
 
                 @Override
@@ -459,6 +460,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             return null;
         }
     }
+
+    /** Released once the scene surface exists. The GPU plugin asks rlawt for a
+     *  context about thirty seconds into the client's startup, and the
+     *  SurfaceView only gets its surface once it has been laid out, which was
+     *  two minutes later: rlawt was asked for a context before there was
+     *  anything to draw on. */
+    private static final java.util.concurrent.CountDownLatch sSceneSurfaceReady =
+            new java.util.concurrent.CountDownLatch(1);
 
     /** GPU mode is opt-in while it is being brought up, so a broken experiment
      *  cannot take the working software path with it. Toggled by creating or
@@ -897,6 +906,15 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         System.setProperty("pojav.skip.methodsInjector", "1");
         new Thread(() -> {
             try {
+                if (gpuModeEnabled()) {
+                    // Nothing may start before the scene surface exists, or the
+                    // GPU plugin asks for a context there is no window for.
+                    if (!sSceneSurfaceReady.await(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                        Log.w("RuneLiteGame", "scene surface never arrived; starting anyway");
+                    } else {
+                        Log.i("RuneLiteGame", "scene surface ready, starting the JVM");
+                    }
+                }
                 JREUtils.redirectAndPrintJRELog();
                 List<String> argList = new ArrayList<>(Arrays.asList(javaArgs.split(" ")));
                 List<String> javaArgList = new ArrayList<>();
