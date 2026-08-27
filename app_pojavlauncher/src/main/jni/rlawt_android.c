@@ -304,7 +304,18 @@ Java_net_runelite_rlawt_AWTContext_createGLContext(JNIEnv *env, jobject self) {
         rlawtThrow(env, msg);
         return;
     }
-    LOGI("GL context up, EGL %d.%d", major, minor);
+    /* Leave it current, as the other backends do. RuneLite calls
+       GL.createCapabilities right after this, and LWJGL resolves every GL entry
+       point through the current context: without one they all come back null and
+       the first call through them is a jump to address zero. */
+    if (!egl.makeCurrent(ctx->dpy, ctx->surface, ctx->surface, ctx->context)) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "rlawt: eglMakeCurrent after create failed: 0x%04x",
+                 egl.getError());
+        rlawtThrow(env, msg);
+        return;
+    }
+    LOGI("GL context up and current, EGL %d.%d", major, minor);
 }
 
 JNIEXPORT jint JNICALL
