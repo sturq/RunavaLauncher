@@ -75,6 +75,17 @@ public class JagexLoginActivity extends Activity {
         WebSettings settings = mWeb.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+
+        // account.jagex.com sits behind a Cloudflare bot challenge that fails a
+        // stock WebView: the default user agent carries "; wv" and "Version/4.0",
+        // both of which mark it as embedded. Patch those two tokens out of the
+        // real user agent rather than inventing one, so the Chrome version keeps
+        // matching the client hints the same WebView sends.
+        settings.setUserAgentString(settings.getUserAgentString()
+            .replace("; wv", "")
+            .replace("Version/4.0 ", ""));
+        Log.i(TAG, "user agent: " + settings.getUserAgentString());
 
         CookieManager.getInstance().setAcceptCookie(true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -103,6 +114,36 @@ public class JagexLoginActivity extends Activity {
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 if (intercept(url)) view.stopLoading();
             }
+
+            // Everything below is diagnostics. The login happens on pages we do
+            // not control, so when it goes wrong the log is all we have.
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                view.evaluateJavascript("document.title",
+                    title -> Log.i(TAG, "loaded " + url + " title=" + title));
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request,
+                                        android.webkit.WebResourceError error) {
+                Log.e(TAG, "load error " + error.getErrorCode() + " " + error.getDescription()
+                    + " for " + request.getUrl());
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest request,
+                                            android.webkit.WebResourceResponse response) {
+                if (!request.isForMainFrame()) return;
+                Log.e(TAG, "HTTP " + response.getStatusCode() + " for " + request.getUrl());
+            }
+        });
+
+        mWeb.setWebChromeClient(new android.webkit.WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
+                Log.i(TAG, "console: " + message.message() + " @" + message.sourceId());
+                return true;
+            }
         });
 
         mWeb.loadUrl(AUTH_URL
@@ -117,6 +158,7 @@ public class JagexLoginActivity extends Activity {
 
     private boolean intercept(String url) {
         if (url == null || mBusy) return false;
+        Log.i(TAG, "navigating to " + url);
         if (url.startsWith("jagex:")) {
             mBusy = true;
             onLauncherRedirect(url.substring("jagex:".length()));
