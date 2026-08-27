@@ -28,6 +28,10 @@ extern int pojavInitOpenGL(void);
 extern void *pojavCreateContext(void *contextSrc);
 extern void pojavMakeCurrent(void *window);
 
+/* Called directly rather than through the bridge's function-pointer table, so a
+   failure can be attributed to a step instead of just yielding a null context. */
+#include <ctxbridges/gl_bridge.h>
+
 #define GL_VENDOR                   0x1F00
 #define GL_RENDERER                 0x1F01
 #define GL_VERSION                  0x1F02
@@ -65,12 +69,25 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_probeDesktopGL(JNIEnv *env, jclass clazz
                                      AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM);
     pojavInitOpenGL();
 
-    void *ctx = pojavCreateContext(NULL);
-    if (ctx == NULL) {
-        snprintf(out, sizeof(out), "no GL context (renderer=%s)", renderer);
+    /* pojavInitOpenGL calls this too and ignores the result, which is how a
+       failed EGL setup turns into a null context two calls later. */
+    if (!gl_init()) {
+        snprintf(out, sizeof(out),
+                 "gl_init failed: EGL never came up (renderer=%s, egl=%s)",
+                 renderer, str_or(getenv("POJAVEXEC_EGL"), "unset"));
         return (*env)->NewStringUTF(env, out);
     }
-    pojavMakeCurrent(ctx);
+    gl_setup_window();
+
+    gl_render_window_t *ctx = gl_init_context(NULL);
+    if (ctx == NULL) {
+        snprintf(out, sizeof(out),
+                 "EGL is up but no context: gl_init_context failed "
+                 "(renderer=%s, LIBGL_ES=%s). Check E/jrelog for the EGL error code.",
+                 renderer, str_or(getenv("LIBGL_ES"), "unset"));
+        return (*env)->NewStringUTF(env, out);
+    }
+    gl_make_current(ctx);
 
     /* The renderer library is already dlopen'd by loadGraphicsLibrary, so its
        GL entry points are resolvable in this process. */
