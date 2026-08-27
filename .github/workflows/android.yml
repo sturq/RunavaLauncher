@@ -92,6 +92,15 @@ jobs:
         run: |
           md5sum out/app-debug.apk > out/app-debug.md5
 
+      # Branch builds get an artifact instead, so a change can be installed and
+      # tested without publishing anything.
+      - name: Upload branch .apk
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-${{ github.ref_name }}
+          path: out/app-debug.apk
+
       # Rolling "latest" release that always points at the most recent main-branch
       # build. The tag is deleted + recreated each push so the URL stays stable
       # (https://github.com/sturq/runelitedroid/releases/latest). Skipped on PRs.
