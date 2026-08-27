@@ -358,8 +358,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
      * Leaves the arguments untouched and returns false if anything is missing,
      * so a half-built class path never replaces a working launch.
      */
-    private boolean launchClientDirectly(List<String> args) {
-        String lwjgl = pojavLwjglJars();
+    private boolean launchClientDirectly(List<String> args, String lwjgl) {
         if (lwjgl == null) return false;
 
         File repo = new File(getExternalFilesDir(null), ".runelite/repository2");
@@ -398,25 +397,36 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
 
     /** Pojav's Android build of LWJGL, as a classpath string, or null if it is
      *  not unpacked. */
+    /** Newest first: LWJGL patches the JNI function table for its thread locals,
+     *  and 3.3.3 does not recognise the JNI version this OpenJDK 25 reports.
+     *  It says so and then dies on a null function pointer. */
+    private static final String[] LWJGL_VERSIONS = {"3.4.1", "3.3.3"};
+
+    private String lwjglVersion;
+
     private String pojavLwjglJars() {
-        File dir = new File(getExternalFilesDir(null), "lwjgl3/3.3.3");
-        File core = new File(dir, "lwjgl.jar");
-        File modules = new File(dir, "lwjgl-3.3.3-merged-modules.jar");
-        if (!core.exists()) {
-            Log.w("RuneLiteGame", "no Pojav LWJGL at " + dir);
-            return null;
+        for (String version : LWJGL_VERSIONS) {
+            File dir = new File(getExternalFilesDir(null), "lwjgl3/" + version);
+            File core = new File(dir, "lwjgl.jar");
+            File modules = new File(dir, "lwjgl-" + version + "-merged-modules.jar");
+            if (!core.exists()) continue;
+            lwjglVersion = version;
+            StringBuilder cp = new StringBuilder(core.getAbsolutePath());
+            if (modules.exists()) cp.append(':').append(modules.getAbsolutePath());
+            Log.i("RuneLiteGame", "GPU mode: using Pojav LWJGL " + version);
+            return cp.toString();
         }
-        StringBuilder cp = new StringBuilder(core.getAbsolutePath());
-        if (modules.exists()) cp.append(':').append(modules.getAbsolutePath());
-        return cp.toString();
+        Log.w("RuneLiteGame", "no Pojav LWJGL found");
+        return null;
     }
 
     /** Copy the Android LWJGL natives out of the APK once, and return where they
      *  landed. Null if they are not there to copy. */
     private File unpackLwjglNatives() {
-        String assetDir = "components/lwjgl-3.3.3-natives/"
+        String version = lwjglVersion != null ? lwjglVersion : "3.3.3";
+        String assetDir = "components/lwjgl-" + version + "-natives/"
                 + Architecture.archAsStringAndroid(Tools.DEVICE_ARCHITECTURE);
-        File out = new File(getFilesDir(), "lwjgl-natives");
+        File out = new File(getFilesDir(), "lwjgl-natives-" + version);
         try {
             String[] names = getAssets().list(assetDir);
             if (names == null || names.length == 0) {
@@ -923,6 +933,9 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                     // in libc. It dies with UnsatisfiedLinkError before the GPU
                     // plugin gets anywhere. Point LWJGL at the Android natives that
                     // ship in this APK instead.
+                    // Resolve which LWJGL is being used first: the natives have to
+                    // match the jars, and this is what decides the version.
+                    String lwjglClasspath = pojavLwjglJars();
                     File lwjgl = unpackLwjglNatives();
                     if (lwjgl != null) {
                         javaArgList.add("-Dorg.lwjgl.librarypath=" + lwjgl.getAbsolutePath());
@@ -944,7 +957,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                     // RuneLite's, not on the boot classpath: boot classes have no
                     // class loader, and LWJGL looks its natives up through one, so
                     // that route ends in a NullPointerException in findResource.
-                    launchClientDirectly(argList);
+                    launchClientDirectly(argList, lwjglClasspath);
                 }
                 javaArgList.add("-XX:+IgnoreUnrecognizedVMOptions");
                 javaArgList.add("-XX:Tier4MinInvocationThreshold=150");
