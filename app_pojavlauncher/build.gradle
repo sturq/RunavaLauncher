@@ -6,7 +6,7 @@ plugins {
 // (semver MAJOR.MINOR.PATCH); appVersionCode is derived from it so the two can
 // never drift and the code always increases monotonically with the name.
 // Layout MAJOR*10000 + MINOR*100 + PATCH keeps minor/patch in 0..99.
-def appVersionName = "0.6.0"
+def appVersionName = "0.7.0"
 def appVersionCode = {
     def parts = appVersionName.tokenize('.').collect { it.toInteger() }
     return parts[0] * 10000 + parts[1] * 100 + parts[2]

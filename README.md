@@ -19,9 +19,26 @@ Everything is bundled. Install one APK, tap the icon, log in, play.
 
 Grab the latest APK from the [releases page](https://github.com/sturq/RunavaLauncher/releases/latest) and sideload it. ~125 MB, arm64-v8a only.
 
+## Logging in
+
+Jagex accounts are supported. The app opens your normal browser for the password step, because
+account.jagex.com is behind a bot check that refuses an in-app WebView outright.
+
+1. Tap through the login in the browser that opens.
+2. The browser then fails to load a page at `localhost`. That is the expected end of the flow:
+   the address bar now holds your session.
+3. Copy that whole address and switch back to the app. It is picked up automatically, and
+   cleared from the clipboard once it has been used.
+4. Pick your character.
+
+The session is saved, so this happens once, not on every launch. "Jagex: log out" in the in-game
+drawer forgets it. Old RuneScape accounts that were never migrated skip all of this and log in
+through RuneLite itself.
+
 ## What works
 
 * Full RuneLite client - login, world hop, chat, walking, combat, plugins, everything
+* **Jagex account login**, without the desktop Jagex Launcher
 * The entire RuneLite plugin sidebar - same versions as desktop
 * **Audio** - sound effects, music, plugin sounds, through Android's AAudio output
 * **Both orientations** - the game reflows when you rotate the device, no bars or stretching
@@ -32,7 +49,8 @@ Grab the latest APK from the [releases page](https://github.com/sturq/RunavaLaun
 
 ## Known limitations
 
-* **Software-rendered.** RuneLite's GPU plugin (`librlawt.so`) needs glibc + X11 + GLX symbols that Android doesn't have. The CPU renderer is what runs. Frame rate is fine on a modern phone, but you won't hit desktop GPU-plugin numbers.
+* **Software-rendered.** RuneLite's GPU plugin (`librlawt.so`) needs glibc + X11 + GLX symbols that Android doesn't have. The CPU renderer is what runs, so the game's own render thread is the frame rate ceiling. Fine on a modern phone, but not desktop GPU-plugin numbers.
+* **Logging in needs one copy and paste.** Desktop launchers catch the final redirect with a local server on port 80; an Android app may not bind a privileged port, and a browser never hands an `http://` address to an app.
 * **Portrait is tight.** RuneLite's UI is built for landscape; in portrait everything reflows to fit, but the sidebar is necessarily narrower.
 
 ## Touch controls
@@ -45,7 +63,7 @@ Grab the latest APK from the [releases page](https://github.com/sturq/RunavaLaun
 | 1-finger drag on RuneLite UI (right sidebar) | Left button held - inventory drag, minimap drag, etc. |
 | 2-finger drag | Camera rotate (arrow keys) |
 | 2-finger pinch | Zoom in / out (mouse wheel) |
-| ☰ menu (top-left) | Drawer: keyboard, copy/paste, virtual mouse toggle, log viewer, force-close |
+| ☰ menu (top-left) | Drawer: keyboard, copy/paste, virtual mouse toggle, log viewer, Jagex log out, force-close |
 
 Starting a camera drag also re-focuses the OSRS canvas, so arrow keys still rotate the camera even with the plugin search field open.
 
