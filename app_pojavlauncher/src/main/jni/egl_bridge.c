@@ -84,6 +84,14 @@ EXTERNAL_API void pojavTerminate() {
 
 JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_setupBridgeWindow(JNIEnv* env, ABI_COMPAT jclass clazz, jobject surface) {
     pojav_environ->pojavWindow = ANativeWindow_fromSurface(env, surface);
+    // Also publish it as a pointer in the environment, the same way the Vulkan
+    // loader handle is passed. librlawt is loaded by the JVM rather than by
+    // Dalvik, which puts it in a different linker namespace: it gets its own
+    // copy of libpojavexec, with its own empty pojav_environ, and cannot see
+    // the window through that struct. The process environment is shared.
+    char ptr[32];
+    snprintf(ptr, sizeof(ptr), "%p", (void*) pojav_environ->pojavWindow);
+    setenv("RUNAVA_WINDOW_PTR", ptr, 1);
     if(br_setup_window != NULL) br_setup_window();
 }
 
@@ -95,6 +103,7 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_releaseBridgeWindow(ABI_COMPAT JNIEnv *e
     if (pojav_environ == NULL || pojav_environ->pojavWindow == NULL) return;
     ANativeWindow_release(pojav_environ->pojavWindow);
     pojav_environ->pojavWindow = NULL;
+    unsetenv("RUNAVA_WINDOW_PTR");
 }
 
 EXTERNAL_API void* pojavGetCurrentContext() {

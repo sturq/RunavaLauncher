@@ -231,11 +231,23 @@ Java_net_runelite_rlawt_AWTContext_createGLContext(JNIEnv *env, jobject self) {
     }
     if (!loadEgl(env)) return;
 
-    if (pojav_environ == NULL || pojav_environ->pojavWindow == NULL) {
+    /* Read the window as a pointer out of the environment rather than out of
+       pojav_environ. This library is loaded by the JVM, not by Dalvik, so it
+       lives in a different linker namespace and gets its own copy of
+       libpojavexec whose pojav_environ is empty. The environment is shared. */
+    ANativeWindow *window = NULL;
+    const char *windowPtr = getenv("RUNAVA_WINDOW_PTR");
+    if (windowPtr != NULL) {
+        window = (ANativeWindow *) (uintptr_t) strtoull(windowPtr, NULL, 16);
+    }
+    if (window == NULL && pojav_environ != NULL) {
+        window = pojav_environ->pojavWindow;
+    }
+    if (window == NULL) {
         rlawtThrow(env, "rlawt: the launcher has not handed over a surface yet");
         return;
     }
-    ctx->window = pojav_environ->pojavWindow;
+    ctx->window = window;
     ANativeWindow_acquire(ctx->window);
 
     ctx->dpy = egl.getDisplay(EGL_DEFAULT_DISPLAY);
