@@ -256,8 +256,19 @@ Java_net_runelite_rlawt_AWTContext_createGLContext(JNIEnv *env, jobject self) {
         window = pojav_environ->pojavWindow;
     }
     if (window == NULL) {
-        rlawtThrow(env, "rlawt: the launcher has not handed over a surface yet");
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "rlawt: no surface. RUNAVA_WINDOW_PTR=%s, pojav_environ=%p, its window=%p",
+                 windowPtr != NULL ? windowPtr : "(unset)",
+                 (void *) pojav_environ,
+                 pojav_environ != NULL ? (void *) pojav_environ->pojavWindow : NULL);
+        rlawtThrow(env, msg);
         return;
+    }
+    {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "got the scene window at %p", (void *) window);
+        rlawtNote(msg);
     }
     ctx->window = window;
     ANativeWindow_acquire(ctx->window);
