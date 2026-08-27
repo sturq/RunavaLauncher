@@ -345,6 +345,21 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
     }
 
+    /** Pojav's Android build of LWJGL, as a classpath string, or null if it is
+     *  not unpacked. */
+    private String pojavLwjglJars() {
+        File dir = new File(getExternalFilesDir(null), "lwjgl3/3.3.3");
+        File core = new File(dir, "lwjgl.jar");
+        File modules = new File(dir, "lwjgl-3.3.3-merged-modules.jar");
+        if (!core.exists()) {
+            Log.w("RuneLiteGame", "no Pojav LWJGL at " + dir);
+            return null;
+        }
+        StringBuilder cp = new StringBuilder(core.getAbsolutePath());
+        if (modules.exists()) cp.append(':').append(modules.getAbsolutePath());
+        return cp.toString();
+    }
+
     /** Copy the Android LWJGL natives out of the APK once, and return where they
      *  landed. Null if they are not there to copy. */
     private File unpackLwjglNatives() {
@@ -869,6 +884,18 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                     // which beats inferring it from the one failure it reports.
                     javaArgList.add("-Dorg.lwjgl.util.Debug=true");
                     javaArgList.add("-Dorg.lwjgl.util.DebugLoader=true");
+
+                    // Matching natives are not enough. RuneLite ships stock LWJGL,
+                    // whose Java half assumes glibc and X11 too: the failure comes
+                    // out of org.lwjgl.system.linux.DynamicLinkLoader. Pojav
+                    // maintains an Android fork of LWJGL and its jars are already
+                    // unpacked here, so put those on the boot classpath where they
+                    // take precedence over the ones RuneLite carries.
+                    String lwjglJars = pojavLwjglJars();
+                    if (lwjglJars != null) {
+                        javaArgList.add("-Xbootclasspath/a:" + lwjglJars);
+                        Log.i("RuneLiteGame", "GPU mode: lwjgl jars=" + lwjglJars);
+                    }
                 }
                 javaArgList.add("-XX:+IgnoreUnrecognizedVMOptions");
                 javaArgList.add("-XX:Tier4MinInvocationThreshold=150");
