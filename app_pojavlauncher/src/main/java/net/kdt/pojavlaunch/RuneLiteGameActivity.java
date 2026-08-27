@@ -202,9 +202,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
 
                 @Override
                 public void surfaceDestroyed(android.view.SurfaceHolder holder) {
-                    // Releasing here is what the old code never did, which is
-                    // where the stale-window leak came from.
-                    JREUtils.releaseBridgeWindow();
+                    // Deliberately not released. This surface is destroyed and
+                    // recreated several times while the client starts, and
+                    // releasing clears the pointer rlawt reads: the GPU plugin
+                    // asked during one of those gaps and was told there was no
+                    // surface at all. The next surfaceCreated overwrites it,
+                    // which costs one window reference per recreation and is
+                    // cheaper than the race.
+                    gpuLog("scene surface destroyed, keeping the pointer");
                 }
             });
         } else {
