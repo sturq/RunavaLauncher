@@ -345,6 +345,25 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
     }
 
+    /**
+     * Turn "-jar X" into "-cp extra:X net.runelite.launcher.Launcher", so extra
+     * jars can be put ahead of RuneLite's own. With -jar the class path is
+     * ignored entirely, which leaves no way to override what RuneLite ships.
+     */
+    private void swapJarForClasspath(List<String> args, String extraClasspath) {
+        if (extraClasspath == null) return;
+        int i = args.indexOf("-jar");
+        if (i < 0 || i + 1 >= args.size()) {
+            Log.w("RuneLiteGame", "no -jar argument to rewrite; leaving the class path alone");
+            return;
+        }
+        String jar = args.get(i + 1);
+        args.set(i, "-cp");
+        args.set(i + 1, extraClasspath + ":" + jar);
+        args.add(i + 2, "net.runelite.launcher.Launcher");
+        Log.i("RuneLiteGame", "GPU mode: class path now " + extraClasspath + ":" + jar);
+    }
+
     /** Pojav's Android build of LWJGL, as a classpath string, or null if it is
      *  not unpacked. */
     private String pojavLwjglJars() {
@@ -888,14 +907,12 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                     // Matching natives are not enough. RuneLite ships stock LWJGL,
                     // whose Java half assumes glibc and X11 too: the failure comes
                     // out of org.lwjgl.system.linux.DynamicLinkLoader. Pojav
-                    // maintains an Android fork of LWJGL and its jars are already
-                    // unpacked here, so put those on the boot classpath where they
-                    // take precedence over the ones RuneLite carries.
-                    String lwjglJars = pojavLwjglJars();
-                    if (lwjglJars != null) {
-                        javaArgList.add("-Xbootclasspath/a:" + lwjglJars);
-                        Log.i("RuneLiteGame", "GPU mode: lwjgl jars=" + lwjglJars);
-                    }
+                    // maintains an Android fork of LWJGL, and its jars are already
+                    // unpacked here. They go on the ordinary classpath ahead of
+                    // RuneLite's, not on the boot classpath: boot classes have no
+                    // class loader, and LWJGL looks its natives up through one, so
+                    // that route ends in a NullPointerException in findResource.
+                    swapJarForClasspath(argList, pojavLwjglJars());
                 }
                 javaArgList.add("-XX:+IgnoreUnrecognizedVMOptions");
                 javaArgList.add("-XX:Tier4MinInvocationThreshold=150");
