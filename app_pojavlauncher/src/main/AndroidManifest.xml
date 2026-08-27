@@ -98,11 +98,21 @@
         <activity
             android:name=".RuneLiteLauncherActivity"
             android:exported="false" />
+        <!-- exported + singleTask so the browser can hand the jagex: redirect back
+             to the instance that is already waiting for it. -->
         <activity
             android:name=".jagex.JagexLoginActivity"
             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
             android:label="@string/jagex_login_title"
-            android:exported="false" />
+            android:launchMode="singleTask"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="jagex" />
+            </intent-filter>
+        </activity>
         <activity
             android:process=":runelitegame"
             android:name=".RuneLiteGameActivity"

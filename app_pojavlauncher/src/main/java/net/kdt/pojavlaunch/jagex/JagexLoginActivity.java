@@ -2,20 +2,24 @@ package net.kdt.pojavlaunch.jagex;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Base64;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
-
-import androidx.webkit.UserAgentMetadata;
-import androidx.webkit.WebSettingsCompat;
-import androidx.webkit.WebViewFeature;
 
 import net.kdt.pojavlaunch.R;
 
@@ -30,24 +34,29 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
-import java.util.Arrays;
-import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * The Jagex account login, in a WebView, without the desktop Jagex Launcher.
+ * Jagex account login, without the desktop Jagex Launcher.
  *
- * Two OAuth legs against account.jagex.com, exactly what the official launcher
- * does:
- *   1. "launcher" client, auth code + PKCE, redirect lands on a jagex: URL that
- *      carries the code. Exchanged for an id_token.
- *   2. "consent" client, implicit id_token, redirect lands on http://localhost.
- *      Rides the session cookie leg 1 left in the WebView, so it is usually
- *      invisible to the user.
- * The consent id_token buys a game session id, the session id lists the
- * characters on the account, and session id + character id are what the
- * gamepack wants in JX_SESSION_ID / JX_CHARACTER_ID.
+ * The flow is the launcher's own, split across three places for one reason:
+ * account.jagex.com is behind Cloudflare, and POST /api/auth/login/jagex is
+ * refused with a flat 403 from a firewall rule whenever the request comes from
+ * a WebView. That is decided on the TLS handshake, so no user agent or client
+ * hint fixes it. The same login succeeds in the device's real browser.
+ *
+ *   1. The password step runs in the real browser. Its redirect ends on a
+ *      jagex: URL, which is a custom scheme, so Android hands it back to this
+ *      activity through the intent filter.
+ *   2. The code is exchanged for tokens over plain HTTP from the app.
+ *      /oauth2/token is not behind the bot rules.
+ *   3. The consent step runs in the WebView here. It carries the identity in
+ *      id_token_hint rather than a login cookie, so it does not matter that the
+ *      browser and the WebView have separate cookie jars, and /oauth2/auth only
+ *      presents the ordinary Cloudflare challenge, which the WebView passes.
+ *
+ * The consent id_token then buys a game session id, the session id lists the
+ * characters, and the result is what the gamepack reads out of JX_SESSION_ID
+ * and JX_CHARACTER_ID.
  */
 public class JagexLoginActivity extends Activity {
     private static final String TAG = "JagexLogin";
@@ -63,42 +72,63 @@ public class JagexLoginActivity extends Activity {
     private static final String CONSENT_CLIENT_ID  = "1fddee4e-b100-4f4e-b2b0-097f9088f9d2";
     private static final String CONSENT_REDIRECT   = "http://localhost";
 
+    /** The browser step leaves this process in the background, and it can be
+     *  killed while the user types their password, so the PKCE verifier has to
+     *  outlive the activity. */
+    private static final String PREFS = "jagex_login_state";
+    private static final String KEY_VERIFIER = "code_verifier";
+    private static final String KEY_STATE = "state";
+
     private WebView mWeb;
-    private String mCodeVerifier;
-    private String mLauncherState;
+    private TextView mStatus;
     private String mConsentState;
-    /** Both redirects can be reported twice (shouldOverrideUrlLoading + onPageStarted). */
+    /** The consent redirect gets reported twice, by shouldOverrideUrlLoading and
+     *  again by onPageStarted. */
     private boolean mBusy;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        buildUi();
 
-        mCodeVerifier = randomToken(48);
-        mLauncherState = randomToken(12);
+        if (handleBrowserCallback(getIntent())) return;
+        startBrowserLogin();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleBrowserCallback(intent);
+    }
+
+    private void buildUi() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+
+        mStatus = new TextView(this);
+        mStatus.setText(R.string.jagex_login_in_browser);
+        mStatus.setGravity(Gravity.CENTER);
+        mStatus.setPadding(48, 48, 48, 48);
+        root.addView(mStatus, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         mWeb = new WebView(this);
-        setContentView(mWeb);
+        root.addView(mWeb, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        setContentView(root);
 
         WebSettings settings = mWeb.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
 
-        presentAsChrome(settings);
-        Log.i(TAG, "user agent: " + settings.getUserAgentString());
-
         CookieManager.getInstance().setAcceptCookie(true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             CookieManager.getInstance().setAcceptThirdPartyCookies(mWeb, true);
         }
-        // We only get here when there are no credentials, so start from a clean
-        // slate - otherwise a stale cookie silently logs back into the account
-        // the user just logged out of.
-        CookieManager.getInstance().removeAllCookies(ignored -> startLogin());
-    }
 
-    private void startLogin() {
         mWeb.setWebViewClient(new WebViewClient() {
             @Override
             @SuppressWarnings("deprecation")
@@ -116,17 +146,10 @@ public class JagexLoginActivity extends Activity {
                 if (intercept(url)) view.stopLoading();
             }
 
-            // Everything below is diagnostics. The login happens on pages we do
-            // not control, so when it goes wrong the log is all we have.
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                view.evaluateJavascript("document.title",
-                    title -> Log.i(TAG, "loaded " + redact(url) + " title=" + title));
-            }
-
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request,
                                         android.webkit.WebResourceError error) {
+                if (!request.isForMainFrame()) return;
                 Log.e(TAG, "load error " + error.getErrorCode() + " " + error.getDescription()
                     + " for " + redact(request.getUrl().toString()));
             }
@@ -138,129 +161,65 @@ public class JagexLoginActivity extends Activity {
                     + (request.isForMainFrame() ? " (main) " : " ")
                     + request.getMethod() + " " + redact(request.getUrl().toString()));
             }
-
-            /** Every request the page makes, XHR included. Returning null leaves the
-             *  WebView to actually perform it; this is only here to see where the
-             *  login flow talks to. */
-            @Override
-            public android.webkit.WebResourceResponse shouldInterceptRequest(
-                    WebView view, WebResourceRequest request) {
-                Log.i(TAG, "request " + request.getMethod() + " "
-                    + redact(request.getUrl().toString()));
-                return null;
-            }
         });
+    }
 
-        mWeb.setWebChromeClient(new android.webkit.WebChromeClient() {
-            @Override
-            public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
-                Log.i(TAG, "console: " + message.message()
-                    + " @" + redact(message.sourceId()));
-                return true;
-            }
-        });
+    // --- step 1: the password, in the user's own browser --------------------
 
-        mWeb.loadUrl(AUTH_URL
-            + "?response_type=code"
+    private void startBrowserLogin() {
+        String verifier = randomToken(48);
+        String state = randomToken(12);
+        prefs().edit().putString(KEY_VERIFIER, verifier).putString(KEY_STATE, state).apply();
+
+        String url = AUTH_URL
+            + "?flow=launcher"
+            + "&response_type=code"
             + "&client_id=" + LAUNCHER_CLIENT_ID
             + "&redirect_uri=" + enc(LAUNCHER_REDIRECT)
             + "&scope=" + enc(LAUNCHER_SCOPE)
-            + "&state=" + enc(mLauncherState)
-            + "&code_challenge=" + enc(pkceChallenge(mCodeVerifier))
-            + "&code_challenge_method=S256");
-    }
+            + "&state=" + enc(state)
+            + "&code_challenge=" + enc(pkceChallenge(verifier))
+            + "&code_challenge_method=S256"
+            + "&prompt=login";
 
-    /**
-     * Make the WebView look like Chrome for Android to Cloudflare.
-     *
-     * Rewriting only the user agent string is not enough and actually makes things
-     * worse: Chromium keeps sending Sec-CH-UA: "Android WebView", the two
-     * contradict each other, and Jagex's firewall answers POST
-     * /api/auth/login/jagex with a flat 403. The user agent client hints have to
-     * agree with the user agent, which is what setUserAgentMetadata is for.
-     *
-     * The Chrome version is taken from the WebView's own user agent so the claim
-     * stays true to the engine actually rendering the page.
-     */
-    private static void presentAsChrome(WebSettings settings) {
-        String defaultUa = settings.getUserAgentString();
-        settings.setUserAgentString(defaultUa
-            .replace("; wv", "")
-            .replace("Version/4.0 ", ""));
-
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
-            Log.w(TAG, "WebView too old for user agent client hints, login may be refused");
-            return;
+        Intent browser = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        browser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(browser);
+        } catch (Exception e) {
+            fail("No browser available for the Jagex login");
         }
-
-        String fullVersion = "0.0.0.0";
-        Matcher m = Pattern.compile("Chrome/(\\d+(?:\\.\\d+)*)").matcher(defaultUa);
-        if (m.find()) fullVersion = m.group(1);
-        String majorVersion = fullVersion.split("\\.")[0];
-
-        List<UserAgentMetadata.BrandVersion> brands = Arrays.asList(
-            brand("Not_A Brand", "99", "99.0.0.0"),
-            brand("Chromium", majorVersion, fullVersion),
-            brand("Google Chrome", majorVersion, fullVersion));
-
-        WebSettingsCompat.setUserAgentMetadata(settings, new UserAgentMetadata.Builder()
-            .setBrandVersionList(brands)
-            .setFullVersion(fullVersion)
-            .setPlatform("Android")
-            .setPlatformVersion(Build.VERSION.RELEASE)
-            .setArchitecture("")
-            .setModel(Build.MODEL)
-            .setMobile(true)
-            .setBitness(UserAgentMetadata.BITNESS_DEFAULT)
-            .setWow64(false)
-            .build());
-        Log.i(TAG, "client hints set to Chrome " + fullVersion);
     }
 
-    private static UserAgentMetadata.BrandVersion brand(String name, String major, String full) {
-        return new UserAgentMetadata.BrandVersion.Builder()
-            .setBrand(name)
-            .setMajorVersion(major)
-            .setFullVersion(full)
-            .build();
-    }
+    /** Step 1's redirect ends at jagex:code=...,state=...,intent=... */
+    private boolean handleBrowserCallback(Intent intent) {
+        String data = intent == null ? null : intent.getDataString();
+        if (data == null || !data.startsWith("jagex:")) return false;
 
-    private boolean intercept(String url) {
-        if (url == null || mBusy) return false;
-        Log.i(TAG, "navigating to " + redact(url));
-        if (url.startsWith("jagex:")) {
-            mBusy = true;
-            onLauncherRedirect(url.substring("jagex:".length()));
-            return true;
-        }
-        if (url.startsWith(CONSENT_REDIRECT)) {
-            mBusy = true;
-            onConsentRedirect(url);
-            return true;
-        }
-        return false;
-    }
-
-    /** Leg 1 callback: jagex:code=...,state=...,intent=... */
-    private void onLauncherRedirect(String params) {
+        String params = data.substring("jagex:".length());
         final String code = param(params, "code");
         String state = param(params, "state");
-        if (code == null || !mLauncherState.equals(state)) {
-            fail("Login callback did not match this session");
-            return;
-        }
+        String expected = prefs().getString(KEY_STATE, "");
+        final String verifier = prefs().getString(KEY_VERIFIER, "");
 
+        if (code == null || expected.isEmpty() || !expected.equals(state)) {
+            fail("Login callback did not match this session");
+            return true;
+        }
+        prefs().edit().clear().apply();
+
+        mStatus.setText(R.string.jagex_finishing);
         run(() -> {
             JSONObject tokens = new JSONObject(postForm(TOKEN_URL,
                 "grant_type=authorization_code"
                     + "&client_id=" + LAUNCHER_CLIENT_ID
                     + "&code=" + enc(code)
-                    + "&code_verifier=" + enc(mCodeVerifier)
+                    + "&code_verifier=" + enc(verifier)
                     + "&redirect_uri=" + enc(LAUNCHER_REDIRECT)));
             String idToken = tokens.optString("id_token", "");
             if (idToken.isEmpty()) throw new IllegalStateException("no id_token in token response");
 
-            // A migrated Jagex account needs the second leg. An un-migrated
+            // A migrated Jagex account needs the consent step. An un-migrated
             // RuneScape account logs in through RuneLite itself with no JX_ vars.
             String provider = jwtClaims(idToken).optString("login_provider", "jagex");
             if (!"jagex".equalsIgnoreCase(provider)) {
@@ -270,23 +229,39 @@ public class JagexLoginActivity extends Activity {
                 });
                 return;
             }
-
-            mConsentState = randomToken(12);
-            final String consentUrl = AUTH_URL
-                + "?response_type=" + enc("id_token code")
-                + "&client_id=" + CONSENT_CLIENT_ID
-                + "&redirect_uri=" + enc(CONSENT_REDIRECT)
-                + "&scope=" + enc("openid offline")
-                + "&state=" + enc(mConsentState)
-                + "&nonce=" + enc(randomToken(36));
-            runOnUiThread(() -> {
-                mBusy = false;
-                mWeb.loadUrl(consentUrl);
-            });
+            runOnUiThread(() -> startConsent(idToken));
         });
+        return true;
     }
 
-    /** Leg 2 callback: http://localhost/#id_token=...&code=...&state=... */
+    // --- step 2: consent, in the WebView, carried by id_token_hint -----------
+
+    private void startConsent(String launcherIdToken) {
+        mConsentState = randomToken(12);
+        mStatus.setText(R.string.jagex_finishing);
+        mWeb.loadUrl(AUTH_URL
+            + "?id_token_hint=" + enc(launcherIdToken)
+            + "&nonce=" + enc(randomToken(36))
+            + "&prompt=consent"
+            + "&response_type=" + enc("id_token code")
+            + "&client_id=" + CONSENT_CLIENT_ID
+            + "&redirect_uri=" + enc(CONSENT_REDIRECT)
+            + "&scope=" + enc("openid offline")
+            + "&state=" + enc(mConsentState));
+    }
+
+    private boolean intercept(String url) {
+        if (url == null || mBusy) return false;
+        Log.i(TAG, "navigating to " + redact(url));
+        if (url.startsWith(CONSENT_REDIRECT)) {
+            mBusy = true;
+            onConsentRedirect(url);
+            return true;
+        }
+        return false;
+    }
+
+    /** http://localhost/#id_token=...&code=...&state=... */
     private void onConsentRedirect(String url) {
         int hash = url.indexOf('#');
         String fragment = hash < 0 ? "" : url.substring(hash + 1);
@@ -344,6 +319,10 @@ public class JagexLoginActivity extends Activity {
             setResult(RESULT_CANCELED);
             finish();
         });
+    }
+
+    private SharedPreferences prefs() {
+        return getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
     /** Run a network step off the UI thread, surfacing any failure as a toast. */
@@ -424,7 +403,6 @@ public class JagexLoginActivity extends Activity {
      *  process holding READ_LOGS. */
     private static String redact(String url) {
         if (url == null) return "null";
-        // jagex:code=...,state=... carries the code with no query separator at all.
         if (url.startsWith("jagex:")) return "jagex:<redacted>";
         int cut = url.length();
         for (int i = 0; i < cut; i++) {
