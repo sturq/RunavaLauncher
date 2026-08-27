@@ -360,7 +360,32 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 new Thread(() -> {
                     String result;
                     try {
-                        result = JREUtils.probeDesktopGL();
+                        // The surface exists long before the JVM does, and the
+                        // bridge needs both: the renderer environment, which the
+                        // JVM launch thread sets, and a live runtime VM to attach
+                        // to. Set the environment here so the probe does not
+                        // depend on that ordering, then wait for the VM.
+                        android.system.Os.setenv("AMETHYST_RENDERER",
+                                "opengles3_desktopgl_zink_kopper", true);
+                        if (android.system.Os.getenv("FORCE_VSYNC") == null) {
+                            android.system.Os.setenv("FORCE_VSYNC", "false", true);
+                        }
+                        JREUtils.loadGraphicsLibrary();
+
+                        result = null;
+                        for (int attempt = 0; attempt < 40; attempt++) {
+                            String r = JREUtils.probeDesktopGL();
+                            // pojavInit only succeeds once the JVM is up.
+                            if (!r.startsWith("pojavInit failed")) {
+                                result = r;
+                                break;
+                            }
+                            Thread.sleep(3000L);
+                        }
+                        if (result == null) {
+                            result = "the JVM never came up within two minutes, "
+                                   + "so the bridge had nothing to attach to";
+                        }
                     } catch (Throwable t) {
                         result = "probe threw: " + t;
                     }
