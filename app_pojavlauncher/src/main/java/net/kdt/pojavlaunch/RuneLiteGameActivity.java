@@ -386,7 +386,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                         setenvIfUnset("GALLIUM_DRIVER", "zink");
                         setenvIfUnset("MESA_GL_VERSION_OVERRIDE", "4.6COMPAT");
                         setenvIfUnset("MESA_GLSL_VERSION_OVERRIDE", "460");
-                        JREUtils.loadGraphicsLibrary();
+                        // loadGraphicsLibrary returns immediately when this is
+                        // null, and it is still null here: the JVM launch block
+                        // further down sets it, and this thread starts first.
+                        // Without it the renderer library is never dlopen'd and
+                        // EGL cannot come up at all.
+                        Tools.LOCAL_RENDERER = "opengles3_desktopgl_zink_kopper";
+                        String lib = JREUtils.loadGraphicsLibrary();
+                        Log.i("RuneLiteGame", "GL probe loaded renderer library: " + lib);
 
                         result = JREUtils.probeDesktopGL();
                     } catch (Throwable t) {
