@@ -731,19 +731,22 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 List<String> argList = new ArrayList<>(Arrays.asList(javaArgs.split(" ")));
                 List<String> javaArgList = new ArrayList<>();
                 Tools.getCacioJavaArgs(javaArgList, runtime.javaVersion == 8, this);
-                // JVM stability mitigations. The bundled OpenJDK-17 build for Android
-                // reproducibly faults at libjvm.so+0xa14ca0 a few seconds into AWT
-                // activity (4 captures, same pc offset, different triggers). Same-offset
-                // crashes in libjvm point at JIT-compiled native code that bugs out under
-                // a specific opt path, or a GC barrier that's mishandling AWT image
-                // buffers. Two mitigations together:
-                //   -XX:+UseSerialGC         — drop G1's concurrent collector so AWT
-                //                              image buffers don't move under us.
-                //   -XX:TieredStopAtLevel=1  — keep C1 (fast simple JIT), disable C2
-                //                              (aggressive optimizer where most JIT
-                //                              correctness bugs live).
+                // -XX:TieredStopAtLevel=1 used to be set here, together with SerialGC,
+                // to stop the JVM faulting at libjvm.so+0xa14ca0 a few seconds into AWT
+                // activity. The guess at the time was a bad C2 optimisation or a GC
+                // barrier moving AWT image buffers. Both were wrong: the tombstone says
+                // SIGSEGV / SEGV_MTESERR, so it was Memory Tagging catching a real
+                // memory error, now opted out of in the manifest. A per-frame JNI local
+                // reference leak in awt_bridge.c has been fixed since as well.
+                //
+                // Disabling C2 is very expensive here. OSRS renders in software through
+                // Caciocavallo, so its rasteriser is the hottest numeric loop in the
+                // process, and that is exactly the code C2 exists to optimise. Running
+                // it on the C1 baseline compiler was costing far more than it bought.
+                //
+                // SerialGC stays for now: it is a separate question and worth changing
+                // on its own so a regression stays attributable.
                 javaArgList.add("-XX:+UseSerialGC");
-                javaArgList.add("-XX:TieredStopAtLevel=1");
                 // Sync-extract the window-maximizer agent into our own files dir so we
                 // never race the async unpackComponents flow.
                 File agentJar = extractAgentJar();
