@@ -23,10 +23,18 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- memtagMode: the bundled OpenJDK trips Memory Tagging. On a Pixel 8 under
+         GrapheneOS the game dies seconds after the JVM starts, SIGSEGV with
+         SEGV_MTESERR inside libjvm.so. It is the same fault that kept getting
+         blamed on the JRE version, once at libjvm.so+0xa14ca0 on JRE 17 and once
+         at +0xac44cc on JRE 21: MTE catches what other devices let pass.
+         allowNativeHeapPointerTagging only covers the older top-byte-ignore
+         scheme, not MTE, so it needs its own opt-out. -->
     <application
         android:name=".PojavApplication"
         android:allowBackup="true"
         android:allowNativeHeapPointerTagging="false"
+        android:memtagMode="off"
         android:appCategory="game"
         android:hasFragileUserData="true"
         android:icon="@mipmap/ic_launcher"
