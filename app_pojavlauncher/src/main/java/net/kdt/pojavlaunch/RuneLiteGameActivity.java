@@ -185,6 +185,9 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // once blamed for the libjvm SIGSEGV, which turned out to be Memory
         // Tagging instead, but the leak is real and still needs a release.
         mGlSurface.setVisibility(View.GONE);
+        // Unattended: the probe needs no surface, so it can just run itself. The
+        // delay only keeps it out of the way of the JVM starting up.
+        mUiHandler.postDelayed(this::runGlProbe, 25_000L);
 
         MainActivity.GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         mKeyboardInput.setCharacterSender(new AwtCharSender());
@@ -292,9 +295,8 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         });
         findViewById(R.id.rl_btn_gl_probe).setOnClickListener(v -> {
             mDrawer.closeDrawers();
-            Toast.makeText(this, "Bringing up the GL stack, this takes a moment",
-                    Toast.LENGTH_SHORT).show();
-            armGlProbe();
+            Toast.makeText(this, "Probing the GL stack", Toast.LENGTH_SHORT).show();
+            runGlProbe();
         });
         findViewById(R.id.rl_btn_jagex_logout).setOnClickListener(v -> {
             mDrawer.closeDrawers();
@@ -327,88 +329,33 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
     }
 
-    /** Show the GL surface and, once it exists, ask the bridge what it can give us.
+    /**
+     * Ask the driver what desktop GL it can give us, and write the answer down.
      *
-     *  Run from the drawer rather than at startup, and deliberately so: every
-     *  earlier attempt failed because it ran before the JVM launch thread had
-     *  applied the environment the bridge reads with getenv, or set the
-     *  LD_LIBRARY_PATH its loader searches. By the time this button can be
-     *  pressed, all of that is in place. */
-    private void armGlProbe() {
-        mGlSurface.setVisibility(View.VISIBLE);
-        mGlSurface.getHolder().addCallback(new android.view.SurfaceHolder.Callback() {
-            private boolean done;
-
-            @Override
-            public void surfaceCreated(android.view.SurfaceHolder holder) {
-                if (done) return;
-                done = true;
-                JREUtils.setupBridgeWindow(holder.getSurface());
-                new Thread(() -> {
-                    String result;
-                    try {
-                        // The surface exists long before the JVM launch thread
-                        // has applied the renderer environment, so set it here
-                        // rather than depending on that ordering. The context
-                        // itself needs no JVM.
-                        // The bridge reads several of these with getenv and hands
-                        // the result straight to strcmp or strtol, so an unset one
-                        // is a null dereference rather than a default.
-                        android.system.Os.setenv("AMETHYST_RENDERER",
-                                "opengles3_desktopgl_zink_kopper", true);
-                        setenvIfUnset("FORCE_VSYNC", "false");
-                        setenvIfUnset("LIBGL_ES", "3");
-                        setenvIfUnset("POJAVEXEC_EGL", "libEGL_mesa.so");
-                        setenvIfUnset("MESA_LOADER_DRIVER_OVERRIDE", "zink");
-                        setenvIfUnset("GALLIUM_DRIVER", "zink");
-                        setenvIfUnset("MESA_GL_VERSION_OVERRIDE", "4.6COMPAT");
-                        setenvIfUnset("MESA_GLSL_VERSION_OVERRIDE", "460");
-                        // loadGraphicsLibrary returns immediately when this is
-                        // null, and it is still null here: the JVM launch block
-                        // further down sets it, and this thread starts first.
-                        // Without it the renderer library is never dlopen'd and
-                        // EGL cannot come up at all.
-                        Tools.LOCAL_RENDERER = "opengles3_desktopgl_zink_kopper";
-                        String lib = JREUtils.loadGraphicsLibrary();
-                        Log.i("RuneLiteGame", "GL probe loaded renderer library: " + lib);
-
-                        result = JREUtils.probeDesktopGL();
-                    } catch (Throwable t) {
-                        result = "probe threw: " + t;
-                    }
-                    Log.i("RuneLiteGame", "GL probe:\n" + result);
-                    // Also to disk: the JVM writes a lot when it is unhappy, and
-                    // the logcat buffer does not survive that.
-                    try {
-                        java.io.File out = new java.io.File(
-                                getExternalFilesDir(null), "gl-probe-result.txt");
-                        try (java.io.FileWriter w = new java.io.FileWriter(out)) {
-                            w.write(result);
-                        }
-                        Log.i("RuneLiteGame", "GL probe written to " + out);
-                    } catch (Throwable t) {
-                        Log.w("RuneLiteGame", "could not write the probe result", t);
-                    }
-                    final String shown = result;
-                    mUiHandler.post(() -> new android.app.AlertDialog.Builder(RuneLiteGameActivity.this)
-                        .setTitle("GL probe")
-                        .setMessage(shown)
-                        .setPositiveButton(android.R.string.ok, null)
-                        .show());
-                }, "GLProbe").start();
+     * Runs on a timer with no interaction, and needs neither a surface nor an
+     * unlocked screen: the probe renders to a pbuffer, so there is nothing to
+     * show. Earlier versions hung off the GL SurfaceView and could therefore
+     * only run while somebody was watching.
+     */
+    private void runGlProbe() {
+        new Thread(() -> {
+            String result;
+            try {
+                result = JREUtils.probeDesktopGL(getApplicationInfo().nativeLibraryDir);
+            } catch (Throwable t) {
+                result = "probe threw: " + t;
             }
-
-            @Override
-            public void surfaceChanged(android.view.SurfaceHolder holder, int f, int w, int h) { }
-
-            @Override
-            public void surfaceDestroyed(android.view.SurfaceHolder holder) {
-                // Deliberately not releasing the bridge window. pojavInit acquires
-                // it as well, and releasing here took the JVM down with
-                // SIGBUS inside releaseBridgeWindow on the way out. The probe runs
-                // once per launch, so one window reference is not worth a crash.
+            Log.i("RuneLiteGame", "GL probe:\n" + result);
+            try {
+                java.io.File out = new java.io.File(
+                        getExternalFilesDir(null), "gl-probe-result.txt");
+                try (java.io.FileWriter w = new java.io.FileWriter(out)) {
+                    w.write(result);
+                }
+            } catch (Throwable t) {
+                Log.w("RuneLiteGame", "could not write the probe result", t);
             }
-        });
+        }, "GLProbe").start();
     }
 
     private void wireCanvasTouch() {
