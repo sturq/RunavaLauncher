@@ -2,22 +2,20 @@ package net.kdt.pojavlaunch.jagex;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
+import android.text.InputType;
 import android.util.Base64;
 import android.util.Log;
-import android.view.Gravity;
 import android.view.ViewGroup;
-import android.webkit.CookieManager;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
+import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -32,29 +30,28 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
-import java.security.MessageDigest;
 import java.security.SecureRandom;
 
 /**
  * Jagex account login, without the desktop Jagex Launcher.
  *
- * The flow is the launcher's own, split across three places for one reason:
- * account.jagex.com is behind Cloudflare, and POST /api/auth/login/jagex is
- * refused with a flat 403 from a firewall rule whenever the request comes from
- * a WebView. That is decided on the TLS handshake, so no user agent or client
- * hint fixes it. The same login succeeds in the device's real browser.
+ * The login runs in the device's own browser, never in a WebView. Cloudflare
+ * refuses POST /api/auth/login/jagex with a flat 403 whenever the request comes
+ * from a WebView, and that is decided on the TLS handshake before a header is
+ * read, so no user agent or client hint can change it. The same login succeeds
+ * in a real browser.
  *
- *   1. The password step runs in the real browser. Its redirect ends on a
- *      jagex: URL, which is a custom scheme, so Android hands it back to this
- *      activity through the intent filter.
- *   2. The code is exchanged for tokens over plain HTTP from the app.
- *      /oauth2/token is not behind the bot rules.
- *   3. The consent step runs in the WebView here. It carries the identity in
- *      id_token_hint rather than a login cookie, so it does not matter that the
- *      browser and the WebView have separate cookie jars, and /oauth2/auth only
- *      presents the ordinary Cloudflare challenge, which the WebView passes.
+ * One OAuth leg is enough, the same one rsprox uses: the game client id with
+ * response_type=id_token+code and prompt=login. The launcher leg and its
+ * consent follow-up are not needed, and neither is a login cookie.
  *
- * The consent id_token then buys a game session id, the session id lists the
+ * The redirect lands on http://localhost with the id_token in the fragment.
+ * Desktop launchers bind port 80 and read it with a local server; an Android
+ * app cannot bind a privileged port, and a browser never hands an http:// URL
+ * to an app, so the address comes back through the clipboard instead. That is
+ * picked up automatically when the user switches back.
+ *
+ * The id_token then buys a game session id, the session id lists the
  * characters, and the result is what the gamepack reads out of JX_SESSION_ID
  * and JX_CHARACTER_ID.
  */
@@ -62,242 +59,146 @@ public class JagexLoginActivity extends Activity {
     private static final String TAG = "JagexLogin";
 
     private static final String AUTH_URL     = "https://account.jagex.com/oauth2/auth";
-    private static final String TOKEN_URL    = "https://account.jagex.com/oauth2/token";
     private static final String SESSIONS_URL = "https://auth.jagex.com/game-session/v1/sessions";
     private static final String ACCOUNTS_URL = "https://auth.jagex.com/game-session/v1/accounts";
+    private static final String CLIENT_ID    = "1fddee4e-b100-4f4e-b2b0-097f9088f9d2";
 
-    private static final String LAUNCHER_CLIENT_ID = "com_jagex_auth_desktop_launcher";
-    private static final String LAUNCHER_REDIRECT  = "https://secure.runescape.com/m=weblogin/launcher-redirect";
-    private static final String LAUNCHER_SCOPE     = "openid offline gamesso.token.create user.profile.read";
-    private static final String CONSENT_CLIENT_ID  = "1fddee4e-b100-4f4e-b2b0-097f9088f9d2";
-    private static final String CONSENT_REDIRECT   = "http://localhost";
-
-    /** The browser step leaves this process in the background, and it can be
-     *  killed while the user types their password, so the PKCE verifier has to
-     *  outlive the activity. */
-    private static final String PREFS = "jagex_login_state";
-    private static final String KEY_VERIFIER = "code_verifier";
-    private static final String KEY_STATE = "state";
-
-    private WebView mWeb;
+    private EditText mPaste;
     private TextView mStatus;
-    private String mConsentState;
-    /** The consent redirect gets reported twice, by shouldOverrideUrlLoading and
-     *  again by onPageStarted. */
-    private boolean mBusy;
+    private String mState;
+    private boolean mDone;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        mState = randomToken(12);
         buildUi();
-
-        if (handleBrowserCallback(getIntent())) return;
-        startBrowserLogin();
+        openBrowser();
     }
 
     @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        handleBrowserCallback(intent);
+    protected void onResume() {
+        super.onResume();
+        // Coming back from the browser with the address copied is the normal
+        // path, so take it without making the user press anything.
+        String clip = readClipboard();
+        if (clip != null && clip.contains("id_token=")) submit(clip);
     }
 
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        root.setPadding(pad, pad, pad, pad);
 
         mStatus = new TextView(this);
-        mStatus.setText(R.string.jagex_login_in_browser);
-        mStatus.setGravity(Gravity.CENTER);
-        mStatus.setPadding(48, 48, 48, 48);
-        root.addView(mStatus, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        mStatus.setText(R.string.jagex_browser_instructions);
+        root.addView(mStatus);
 
-        mWeb = new WebView(this);
-        root.addView(mWeb, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        mPaste = new EditText(this);
+        mPaste.setHint(R.string.jagex_paste_hint);
+        mPaste.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        root.addView(mPaste);
 
-        setContentView(root);
-
-        WebSettings settings = mWeb.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-
-        CookieManager.getInstance().setAcceptCookie(true);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            CookieManager.getInstance().setAcceptThirdPartyCookies(mWeb, true);
-        }
-
-        mWeb.setWebViewClient(new WebViewClient() {
-            @Override
-            @SuppressWarnings("deprecation")
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return intercept(url);
-            }
-
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return intercept(request.getUrl().toString());
-            }
-
-            @Override
-            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                if (intercept(url)) view.stopLoading();
-            }
-
-            @Override
-            public void onReceivedError(WebView view, WebResourceRequest request,
-                                        android.webkit.WebResourceError error) {
-                if (!request.isForMainFrame()) return;
-                Log.e(TAG, "load error " + error.getErrorCode() + " " + error.getDescription()
-                    + " for " + redact(request.getUrl().toString()));
-            }
-
-            @Override
-            public void onReceivedHttpError(WebView view, WebResourceRequest request,
-                                            android.webkit.WebResourceResponse response) {
-                Log.e(TAG, "HTTP " + response.getStatusCode()
-                    + (request.isForMainFrame() ? " (main) " : " ")
-                    + request.getMethod() + " " + redact(request.getUrl().toString()));
-            }
-        });
-    }
-
-    // --- step 1: the password, in the user's own browser --------------------
-
-    private void startBrowserLogin() {
-        String verifier = randomToken(48);
-        String state = randomToken(12);
-        prefs().edit().putString(KEY_VERIFIER, verifier).putString(KEY_STATE, state).apply();
-
-        String url = AUTH_URL
-            + "?flow=launcher"
-            + "&response_type=code"
-            + "&client_id=" + LAUNCHER_CLIENT_ID
-            + "&redirect_uri=" + enc(LAUNCHER_REDIRECT)
-            + "&scope=" + enc(LAUNCHER_SCOPE)
-            + "&state=" + enc(state)
-            + "&code_challenge=" + enc(pkceChallenge(verifier))
-            + "&code_challenge_method=S256"
-            + "&prompt=login";
-
-        Intent browser = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-        browser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        try {
-            startActivity(browser);
-        } catch (Exception e) {
-            fail("No browser available for the Jagex login");
-        }
-    }
-
-    /** Step 1's redirect ends at jagex:code=...,state=...,intent=... */
-    private boolean handleBrowserCallback(Intent intent) {
-        String data = intent == null ? null : intent.getDataString();
-        if (data == null || !data.startsWith("jagex:")) return false;
-
-        String params = data.substring("jagex:".length());
-        final String code = param(params, "code");
-        String state = param(params, "state");
-        String expected = prefs().getString(KEY_STATE, "");
-        final String verifier = prefs().getString(KEY_VERIFIER, "");
-
-        if (code == null || expected.isEmpty() || !expected.equals(state)) {
-            fail("Login callback did not match this session");
-            return true;
-        }
-        prefs().edit().clear().apply();
-
-        mStatus.setText(R.string.jagex_finishing);
-        run(() -> {
-            JSONObject tokens = new JSONObject(postForm(TOKEN_URL,
-                "grant_type=authorization_code"
-                    + "&client_id=" + LAUNCHER_CLIENT_ID
-                    + "&code=" + enc(code)
-                    + "&code_verifier=" + enc(verifier)
-                    + "&redirect_uri=" + enc(LAUNCHER_REDIRECT)));
-            String idToken = tokens.optString("id_token", "");
-            if (idToken.isEmpty()) throw new IllegalStateException("no id_token in token response");
-
-            // A migrated Jagex account needs the consent step. An un-migrated
-            // RuneScape account logs in through RuneLite itself with no JX_ vars.
-            String provider = jwtClaims(idToken).optString("login_provider", "jagex");
-            if (!"jagex".equalsIgnoreCase(provider)) {
-                runOnUiThread(() -> {
-                    JagexAccount.saveLegacy(this);
-                    done();
-                });
+        Button paste = new Button(this);
+        paste.setText(R.string.jagex_paste_button);
+        paste.setOnClickListener(v -> {
+            String clip = readClipboard();
+            if (clip == null) {
+                Toast.makeText(this, R.string.jagex_clipboard_empty, Toast.LENGTH_SHORT).show();
                 return;
             }
-            // The launcher leg asks for the gamesso.token.create scope, so try
-            // trading its id_token for a game session directly. If that is
-            // refused we still have to go through the consent step, which needs
-            // the login cookie and therefore the browser.
+            mPaste.setText(clip);
+            submit(clip);
+        });
+        root.addView(paste);
+
+        Button continueButton = new Button(this);
+        continueButton.setText(R.string.jagex_continue);
+        continueButton.setOnClickListener(v -> submit(mPaste.getText().toString()));
+        root.addView(continueButton);
+
+        Button reopen = new Button(this);
+        reopen.setText(R.string.jagex_reopen_browser);
+        reopen.setOnClickListener(v -> openBrowser());
+        root.addView(reopen);
+
+        Button legacy = new Button(this);
+        legacy.setText(R.string.jagex_legacy_account);
+        legacy.setOnClickListener(v -> {
+            JagexAccount.saveLegacy(this);
+            setResult(RESULT_OK);
+            finish();
+        });
+        root.addView(legacy);
+
+        ScrollView scroller = new ScrollView(this);
+        scroller.addView(root, new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        setContentView(scroller);
+    }
+
+    private void openBrowser() {
+        String url = AUTH_URL
+            + "?response_type=" + enc("id_token code")
+            + "&client_id=" + CLIENT_ID
+            + "&nonce=" + enc(randomToken(24))
+            + "&state=" + enc(mState)
+            + "&prompt=login"
+            + "&scope=" + enc("openid offline");
+        try {
+            Intent browser = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            browser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(browser);
+        } catch (Exception e) {
+            Toast.makeText(this, R.string.jagex_no_browser, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private String readClipboard() {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard == null || !clipboard.hasPrimaryClip()) return null;
+        ClipData clip = clipboard.getPrimaryClip();
+        if (clip == null || clip.getItemCount() == 0) return null;
+        CharSequence text = clip.getItemAt(0).coerceToText(this);
+        return text == null ? null : text.toString().trim();
+    }
+
+    /** Takes the whole localhost address the browser was left on. */
+    private void submit(String pastedUrl) {
+        if (mDone) return;
+        int hash = pastedUrl.indexOf('#');
+        String fragment = hash < 0 ? pastedUrl : pastedUrl.substring(hash + 1);
+        final String idToken = param(fragment, "id_token");
+        if (idToken == null) {
+            Toast.makeText(this, R.string.jagex_paste_invalid, Toast.LENGTH_LONG).show();
+            return;
+        }
+        String state = param(fragment, "state");
+        if (state != null && !mState.equals(state)) {
+            Toast.makeText(this, R.string.jagex_paste_stale, Toast.LENGTH_LONG).show();
+            return;
+        }
+        mDone = true;
+        mStatus.setText(R.string.jagex_finishing);
+
+        new Thread(() -> {
             try {
-                JSONObject session = new JSONObject(postJson(SESSIONS_URL, null,
+                JSONObject session = new JSONObject(postJson(SESSIONS_URL,
                     new JSONObject().put("idToken", idToken).toString()));
                 final String sessionId = session.getString("sessionId");
-                Log.i(TAG, "game session created straight from the launcher token");
                 JSONArray accounts = new JSONArray(get(ACCOUNTS_URL, sessionId));
                 if (accounts.length() == 0) throw new IllegalStateException("account has no characters");
                 runOnUiThread(() -> chooseCharacter(sessionId, accounts));
-                return;
             } catch (Exception e) {
-                Log.w(TAG, "launcher token not accepted for a game session, needs consent: " + e);
+                Log.e(TAG, "could not turn the id_token into a game session", e);
+                mDone = false;
+                runOnUiThread(() -> {
+                    mStatus.setText(R.string.jagex_browser_instructions);
+                    Toast.makeText(this, "Jagex login failed: " + e, Toast.LENGTH_LONG).show();
+                });
             }
-            runOnUiThread(() -> startConsent(idToken));
-        });
-        return true;
-    }
-
-    // --- step 2: consent, in the WebView, carried by id_token_hint -----------
-
-    private void startConsent(String launcherIdToken) {
-        mConsentState = randomToken(12);
-        mStatus.setText(R.string.jagex_finishing);
-        mWeb.loadUrl(AUTH_URL
-            + "?id_token_hint=" + enc(launcherIdToken)
-            + "&nonce=" + enc(randomToken(36))
-            + "&prompt=consent"
-            + "&response_type=" + enc("id_token code")
-            + "&client_id=" + CONSENT_CLIENT_ID
-            + "&redirect_uri=" + enc(CONSENT_REDIRECT)
-            + "&scope=" + enc("openid offline")
-            + "&state=" + enc(mConsentState));
-    }
-
-    private boolean intercept(String url) {
-        if (url == null || mBusy) return false;
-        Log.i(TAG, "navigating to " + redact(url));
-        if (url.startsWith(CONSENT_REDIRECT)) {
-            mBusy = true;
-            onConsentRedirect(url);
-            return true;
-        }
-        return false;
-    }
-
-    /** http://localhost/#id_token=...&code=...&state=... */
-    private void onConsentRedirect(String url) {
-        int hash = url.indexOf('#');
-        String fragment = hash < 0 ? "" : url.substring(hash + 1);
-        final String idToken = param(fragment, "id_token");
-        String state = param(fragment, "state");
-        if (idToken == null || mConsentState == null || !mConsentState.equals(state)) {
-            fail("Consent callback did not match this session");
-            return;
-        }
-
-        run(() -> {
-            JSONObject session = new JSONObject(postJson(SESSIONS_URL, null,
-                new JSONObject().put("idToken", idToken).toString()));
-            final String sessionId = session.getString("sessionId");
-
-            JSONArray accounts = new JSONArray(get(ACCOUNTS_URL, sessionId));
-            if (accounts.length() == 0) throw new IllegalStateException("account has no characters");
-
-            runOnUiThread(() -> chooseCharacter(sessionId, accounts));
-        });
+        }).start();
     }
 
     private void chooseCharacter(String sessionId, JSONArray accounts) {
@@ -320,49 +221,25 @@ public class JagexLoginActivity extends Activity {
         JagexAccount.saveJagex(this, sessionId,
             account.optString("accountId", ""),
             account.optString("displayName", ""));
-        done();
-    }
-
-    private void done() {
+        // The address still sitting in the clipboard is a working credential.
+        clearClipboard();
         setResult(RESULT_OK);
         finish();
     }
 
-    private void fail(String message) {
-        Log.e(TAG, message);
-        runOnUiThread(() -> {
-            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-            setResult(RESULT_CANCELED);
-            finish();
-        });
-    }
-
-    private SharedPreferences prefs() {
-        return getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-    }
-
-    /** Run a network step off the UI thread, surfacing any failure as a toast. */
-    private interface Step { void run() throws Exception; }
-
-    private void run(Step step) {
-        new Thread(() -> {
-            try {
-                step.run();
-            } catch (Exception e) {
-                Log.e(TAG, "login step failed", e);
-                fail("Jagex login failed: " + e);
-            }
-        }).start();
+    private void clearClipboard() {
+        try {
+            ClipboardManager clipboard =
+                (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText("", ""));
+        } catch (Exception ignored) {
+        }
     }
 
     // --- plumbing ---------------------------------------------------------
 
-    private static String postForm(String url, String body) throws Exception {
-        return request(url, "POST", "application/x-www-form-urlencoded", null, body);
-    }
-
-    private static String postJson(String url, String bearer, String body) throws Exception {
-        return request(url, "POST", "application/json", bearer, body);
+    private static String postJson(String url, String body) throws Exception {
+        return request(url, "POST", "application/json", null, body);
     }
 
     private static String get(String url, String bearer) throws Exception {
@@ -390,7 +267,7 @@ public class JagexLoginActivity extends Activity {
             int status = conn.getResponseCode();
             InputStream in = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
             String text = in == null ? "" : readAll(in);
-            if (status >= 400) throw new IllegalStateException("HTTP " + status + " from " + url + ": " + text);
+            if (status >= 400) throw new IllegalStateException("HTTP " + status + " from " + url);
             return text;
         } finally {
             conn.disconnect();
@@ -405,36 +282,9 @@ public class JagexLoginActivity extends Activity {
         return buf.toString("UTF-8");
     }
 
-    /** Claims of a JWT. Not verified - the token came straight from Jagex over TLS
-     *  and we only read a routing hint out of it. */
-    private static JSONObject jwtClaims(String jwt) throws Exception {
-        String[] parts = jwt.split("\\.");
-        if (parts.length < 2) throw new IllegalStateException("malformed id_token");
-        return new JSONObject(new String(
-            Base64.decode(parts[1], Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP), "UTF-8"));
-    }
-
-    /** Scheme, host and path only. The query and fragment of these URLs carry the
-     *  authorization code and the id_token, and logcat is world-readable to any
-     *  process holding READ_LOGS. */
-    private static String redact(String url) {
-        if (url == null) return "null";
-        if (url.startsWith("jagex:")) return "jagex:<redacted>";
-        int cut = url.length();
-        for (int i = 0; i < cut; i++) {
-            char c = url.charAt(i);
-            if (c == '?' || c == '#') {
-                cut = i;
-                break;
-            }
-        }
-        String head = url.substring(0, cut);
-        return cut == url.length() ? head : head + "?<redacted>";
-    }
-
-    /** Pull a value out of a "a=1,b=2" or "a=1&b=2" parameter blob. */
+    /** Pull a value out of an "a=1&b=2" blob. */
     private static String param(String blob, String key) {
-        for (String pair : blob.split("[,&]")) {
+        for (String pair : blob.split("[&?]")) {
             int eq = pair.indexOf('=');
             if (eq > 0 && pair.substring(0, eq).trim().equals(key)) {
                 try {
@@ -445,15 +295,6 @@ public class JagexLoginActivity extends Activity {
             }
         }
         return null;
-    }
-
-    private static String pkceChallenge(String verifier) {
-        try {
-            byte[] hash = MessageDigest.getInstance("SHA-256").digest(verifier.getBytes("UTF-8"));
-            return Base64.encodeToString(hash, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
     }
 
     private static String randomToken(int bytes) {
