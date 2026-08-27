@@ -89,13 +89,25 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_probeDesktopGL(JNIEnv *env, jclass clazz
     }
     gl_make_current(ctx);
 
-    /* The renderer library is already dlopen'd by loadGraphicsLibrary, so its
-       GL entry points are resolvable in this process. */
+    /* The renderer library is loaded RTLD_LOCAL, so its symbols are not in the
+       global namespace and RTLD_DEFAULT does not see them. Go through the
+       library handle instead. */
     glGetString_t getString = (glGetString_t) dlsym(RTLD_DEFAULT, "glGetString");
     if (getString == NULL) {
+        static const char *candidates[] = {
+            "libglxshim.so", "libGL.so", "libEGL_mesa.so", "libng_gl4es.so"
+        };
+        for (unsigned i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+            void *h = dlopen(candidates[i], RTLD_NOW | RTLD_GLOBAL);
+            if (h == NULL) continue;
+            getString = (glGetString_t) dlsym(h, "glGetString");
+            if (getString != NULL) break;
+        }
+    }
+    if (getString == NULL) {
         snprintf(out, sizeof(out),
-                 "context is current but glGetString is not resolvable: %s",
-                 str_or(dlerror(), "no dlerror"));
+                 "the context is current, so EGL and the GL context both work, "
+                 "but glGetString could not be resolved from any renderer library");
         return (*env)->NewStringUTF(env, out);
     }
 
