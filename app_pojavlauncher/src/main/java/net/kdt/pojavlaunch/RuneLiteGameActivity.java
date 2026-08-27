@@ -744,9 +744,24 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 // process, and that is exactly the code C2 exists to optimise. Running
                 // it on the C1 baseline compiler was costing far more than it bought.
                 //
-                // SerialGC stays for now: it is a separate question and worth changing
-                // on its own so a regression stays attributable.
-                javaArgList.add("-XX:+UseSerialGC");
+                // SerialGC went with it. It stops the world for every collection, and
+                // startup is where the allocation happens: class loading, plugin init,
+                // the AWT peers. Those pauses are exactly what the first seconds feel
+                // like. G1 is the default and keeps its pauses bounded.
+                //
+                // The rest is warm-up. Until C2 has compiled the rasteriser the game
+                // runs on C1, which is the state this build just stopped shipping
+                // permanently, so it is worth reaching the compiled code sooner.
+                // Defaults are 200/5000/15000; these ask for C2 after roughly a fifth
+                // of that, at the cost of compiling a few methods that never get hot.
+                //
+                // IgnoreUnrecognizedVMOptions first, because a flag this JRE does not
+                // know would otherwise stop the JVM from starting at all, and the JRE
+                // is a third-party Android build of OpenJDK.
+                javaArgList.add("-XX:+IgnoreUnrecognizedVMOptions");
+                javaArgList.add("-XX:Tier4MinInvocationThreshold=150");
+                javaArgList.add("-XX:Tier4InvocationThreshold=1000");
+                javaArgList.add("-XX:Tier4CompileThreshold=3000");
                 // Sync-extract the window-maximizer agent into our own files dir so we
                 // never race the async unpackComponents flow.
                 File agentJar = extractAgentJar();
