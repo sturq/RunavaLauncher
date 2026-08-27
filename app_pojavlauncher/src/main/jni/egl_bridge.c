@@ -90,7 +90,11 @@ JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_setupBridgeWindow
 
 JNIEXPORT void JNICALL
 Java_net_kdt_pojavlaunch_utils_JREUtils_releaseBridgeWindow(ABI_COMPAT JNIEnv *env, ABI_COMPAT jclass clazz) {
+    // Guarded and cleared: calling this twice, or after the window is already
+    // gone, took the JVM down with SIGBUS inside this function.
+    if (pojav_environ == NULL || pojav_environ->pojavWindow == NULL) return;
     ANativeWindow_release(pojav_environ->pojavWindow);
+    pojav_environ->pojavWindow = NULL;
 }
 
 EXTERNAL_API void* pojavGetCurrentContext() {

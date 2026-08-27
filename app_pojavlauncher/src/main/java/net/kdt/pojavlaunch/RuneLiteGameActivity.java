@@ -184,7 +184,31 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // without ever releasing the previous reference. The resulting leak was
         // once blamed for the libjvm SIGSEGV, which turned out to be Memory
         // Tagging instead, but the leak is real and still needs a release.
-        mGlSurface.setVisibility(View.GONE);
+        if (gpuModeEnabled()) {
+            // The scene surface for RuneLite's GPU plugin, which reaches our
+            // rlawt through pojav_environ->pojavWindow. It sits behind the AWT
+            // canvas, which stays transparent where Cacio paints nothing.
+            mGlSurface.setVisibility(View.VISIBLE);
+            mGlSurface.getHolder().addCallback(new android.view.SurfaceHolder.Callback() {
+                @Override
+                public void surfaceCreated(android.view.SurfaceHolder holder) {
+                    Log.i("RuneLiteGame", "GPU mode: handing the scene surface over");
+                    JREUtils.setupBridgeWindow(holder.getSurface());
+                }
+
+                @Override
+                public void surfaceChanged(android.view.SurfaceHolder h, int f, int w, int ht) { }
+
+                @Override
+                public void surfaceDestroyed(android.view.SurfaceHolder holder) {
+                    // Releasing here is what the old code never did, which is
+                    // where the stale-window leak came from.
+                    JREUtils.releaseBridgeWindow();
+                }
+            });
+        } else {
+            mGlSurface.setVisibility(View.GONE);
+        }
 
         MainActivity.GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         mKeyboardInput.setCharacterSender(new AwtCharSender());
@@ -319,6 +343,13 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         } catch (Throwable t) {
             Log.w("RuneLiteGame", "could not set " + name, t);
         }
+    }
+
+    /** GPU mode is opt-in while it is being brought up, so a broken experiment
+     *  cannot take the working software path with it. Toggled by creating or
+     *  deleting "gpu" in the app's external files directory. */
+    private boolean gpuModeEnabled() {
+        return new File(getExternalFilesDir(null), "gpu").exists();
     }
 
     private void wireCanvasTouch() {
@@ -782,6 +813,13 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 // IgnoreUnrecognizedVMOptions first, because a flag this JRE does not
                 // know would otherwise stop the JVM from starting at all, and the JRE
                 // is a third-party Android build of OpenJDK.
+                if (gpuModeEnabled()) {
+                    // Upstream rlawt honours this, so RuneLite loads our Android
+                    // backend without needing any patch of its own.
+                    File rlawt = new File(getApplicationInfo().nativeLibraryDir, "librlawt.so");
+                    javaArgList.add("-Drunelite.rlawtpath=" + rlawt.getAbsolutePath());
+                    Log.i("RuneLiteGame", "GPU mode: rlawt=" + rlawt + " exists=" + rlawt.exists());
+                }
                 javaArgList.add("-XX:+IgnoreUnrecognizedVMOptions");
                 javaArgList.add("-XX:Tier4MinInvocationThreshold=150");
                 javaArgList.add("-XX:Tier4InvocationThreshold=1000");
