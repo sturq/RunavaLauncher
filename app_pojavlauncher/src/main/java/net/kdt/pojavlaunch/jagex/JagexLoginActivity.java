@@ -133,9 +133,20 @@ public class JagexLoginActivity extends Activity {
             @Override
             public void onReceivedHttpError(WebView view, WebResourceRequest request,
                                             android.webkit.WebResourceResponse response) {
-                if (!request.isForMainFrame()) return;
                 Log.e(TAG, "HTTP " + response.getStatusCode()
-                    + " for " + redact(request.getUrl().toString()));
+                    + (request.isForMainFrame() ? " (main) " : " ")
+                    + request.getMethod() + " " + redact(request.getUrl().toString()));
+            }
+
+            /** Every request the page makes, XHR included. Returning null leaves the
+             *  WebView to actually perform it; this is only here to see where the
+             *  login flow talks to. */
+            @Override
+            public android.webkit.WebResourceResponse shouldInterceptRequest(
+                    WebView view, WebResourceRequest request) {
+                Log.i(TAG, "request " + request.getMethod() + " "
+                    + redact(request.getUrl().toString()));
+                return null;
             }
         });
 
