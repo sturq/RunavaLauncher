@@ -185,9 +185,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // once blamed for the libjvm SIGSEGV, which turned out to be Memory
         // Tagging instead, but the leak is real and still needs a release.
         mGlSurface.setVisibility(View.GONE);
-        // Unattended: the probe needs no surface, so it can just run itself. The
-        // delay only keeps it out of the way of the JVM starting up.
-        mUiHandler.postDelayed(this::runGlProbe, 25_000L);
 
         MainActivity.GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         mKeyboardInput.setCharacterSender(new AwtCharSender());
@@ -293,11 +290,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             mLogger.setVisibility(View.VISIBLE);
             mDrawer.closeDrawers();
         });
-        findViewById(R.id.rl_btn_gl_probe).setOnClickListener(v -> {
-            mDrawer.closeDrawers();
-            Toast.makeText(this, "Probing the GL stack", Toast.LENGTH_SHORT).show();
-            runGlProbe();
-        });
         findViewById(R.id.rl_btn_jagex_logout).setOnClickListener(v -> {
             mDrawer.closeDrawers();
             new android.app.AlertDialog.Builder(this)
@@ -327,35 +319,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         } catch (Throwable t) {
             Log.w("RuneLiteGame", "could not set " + name, t);
         }
-    }
-
-    /**
-     * Ask the driver what desktop GL it can give us, and write the answer down.
-     *
-     * Runs on a timer with no interaction, and needs neither a surface nor an
-     * unlocked screen: the probe renders to a pbuffer, so there is nothing to
-     * show. Earlier versions hung off the GL SurfaceView and could therefore
-     * only run while somebody was watching.
-     */
-    private void runGlProbe() {
-        new Thread(() -> {
-            String result;
-            try {
-                result = JREUtils.probeDesktopGL(getApplicationInfo().nativeLibraryDir);
-            } catch (Throwable t) {
-                result = "probe threw: " + t;
-            }
-            Log.i("RuneLiteGame", "GL probe:\n" + result);
-            try {
-                java.io.File out = new java.io.File(
-                        getExternalFilesDir(null), "gl-probe-result.txt");
-                try (java.io.FileWriter w = new java.io.FileWriter(out)) {
-                    w.write(result);
-                }
-            } catch (Throwable t) {
-                Log.w("RuneLiteGame", "could not write the probe result", t);
-            }
-        }, "GLProbe").start();
     }
 
     private void wireCanvasTouch() {

@@ -110,12 +110,6 @@
             android:background="?android:attr/dividerHorizontal" />
 
         <Button
-            android:id="@+id/rl_btn_gl_probe"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="GL probe" />
-
-        <Button
             android:id="@+id/rl_btn_jagex_logout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

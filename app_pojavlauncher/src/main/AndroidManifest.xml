@@ -108,6 +108,21 @@
             android:exported="false" />
         <!-- singleTask so switching back from the browser returns to the instance
              that is already waiting, rather than restarting the login. -->
+        <!-- The GL capability probe, in its own process on purpose. It used to run
+             on a timer inside the game, and when it took that process down the
+             activity restarted and did it again: a restart loop on the thing
+             people actually use. Nothing here shares a process with the game.
+             Exported so it can be triggered with am broadcast; it only reads
+             driver capabilities and writes a text file. -->
+        <receiver
+            android:name=".GlProbeReceiver"
+            android:process=":glprobe"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="net.kdt.pojavlaunch.GL_PROBE" />
+            </intent-filter>
+        </receiver>
+
         <activity
             android:name=".jagex.JagexLoginActivity"
             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
