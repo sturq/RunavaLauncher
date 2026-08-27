@@ -213,6 +213,10 @@ public class JREUtils {
 
         envMap.put("LD_LIBRARY_PATH", LD_LIBRARY_PATH);
         envMap.put("PATH", jreHome + "/bin:" + Os.getenv("PATH"));
+
+        // Jagex account credentials. The OSRS gamepack reads these with
+        // System.getenv, so they have to be in place before the JVM starts.
+        net.kdt.pojavlaunch.jagex.JagexAccount.putEnv(activity, envMap);
         if(FFmpegPlugin.isAvailable) {
             envMap.put("POJAV_FFMPEG_PATH", FFmpegPlugin.executablePath);
         }
@@ -560,7 +564,13 @@ public class JREUtils {
     public static native void initializeHooks();
     public static native void setupExitMethod(Context context);
     // Obtain AWT screen pixels to render on Android SurfaceView
-    public static native int[] renderAWTScreenFrame(/* Object canvas, int width, int height */);
+    /** Hand the AWT renderer the surface to write into, or null to let go of it. */
+    public static native void setAWTSurface(android.view.Surface surface);
+
+    /** Write the current AWT frame into that surface and post it. False means AWT
+     *  had nothing new and the surface keeps showing the previous frame. */
+    public static native boolean blitAWTScreenFrame(int canvasWidth, int visibleWidth,
+                                                    int visibleHeight, boolean opaque);
     static {
         System.loadLibrary("exithook");
         System.loadLibrary("pojavexec");

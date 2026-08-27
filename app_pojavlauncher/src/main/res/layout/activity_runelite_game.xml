@@ -110,6 +110,12 @@
             android:background="?android:attr/dividerHorizontal" />
 
         <Button
+            android:id="@+id/rl_btn_jagex_logout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/jagex_log_out" />
+
+        <Button
             android:id="@+id/rl_btn_force_close"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

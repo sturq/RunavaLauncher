@@ -56,10 +56,14 @@ jobs:
       # FoldCraftLauncher repo's assets, so fetch it straight from raw git -
       # those blobs never expire. We only need arm64 (APP_ABI is arm64-v8a),
       # so we grab just universal + bin-arm64 + version and skip the others.
+      # Pinned to c6f551e: the commit after it (1847aa9, 2026-08-05) dropped the
+      # committed JRE assets in favour of generating them per architecture, which
+      # 404'd every build from that day on. The binpack is a frozen artifact, so
+      # a pinned commit is the right thing to point at anyway.
       - name: Get JRE25
         run: |
           set -euo pipefail
-          base="https://raw.githubusercontent.com/FCL-Team/FoldCraftLauncher/main/FCL/src/main/assets/app_runtime/java/jre25"
+          base="https://raw.githubusercontent.com/FCL-Team/FoldCraftLauncher/c6f551e2094c74203e2a5e107d527f668b4bcae3/FCL/src/main/assets/app_runtime/java/jre25"
           dest="app_pojavlauncher/src/main/assets/components/jre-25"
           mkdir -p "$dest"
           for f in version universal.tar.xz bin-arm64.tar.xz; do
@@ -87,6 +91,15 @@ jobs:
       - name: Gen md5sums
         run: |
           md5sum out/app-debug.apk > out/app-debug.md5
+
+      # Branch builds get an artifact instead, so a change can be installed and
+      # tested without publishing anything.
+      - name: Upload branch .apk
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-${{ github.ref_name }}
+          path: out/app-debug.apk
 
       # Rolling "latest" release that always points at the most recent main-branch
       # build. The tag is deleted + recreated each push so the URL stays stable

@@ -20,6 +20,8 @@ import android.widget.Toast;
 
 import java.io.OutputStream;
 
+import net.kdt.pojavlaunch.jagex.JagexAccount;
+import net.kdt.pojavlaunch.jagex.JagexLoginActivity;
 import net.kdt.pojavlaunch.multirt.MultiRTUtils;
 
 import java.io.ByteArrayOutputStream;
@@ -60,11 +62,33 @@ public class RuneLiteLauncherActivity extends Activity {
      *  path the InternalRuntime enum points at in NewJREUtil. */
     private static final String JRE_ASSET_DIR = "components/jre-25";
 
+    /** Jagex accounts need a session before the JVM starts, so log in first. */
+    private static final int REQ_JAGEX_LOGIN = 4001;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         applyLauncherPrefs();
         copyRuneLiteLogToDownloads();
+        if (!JagexAccount.isConfigured(this)) {
+            startActivityForResult(new Intent(this, JagexLoginActivity.class), REQ_JAGEX_LOGIN);
+            return;
+        }
+        startRuneLite();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_JAGEX_LOGIN) return;
+        if (resultCode != RESULT_OK) {
+            finish();
+            return;
+        }
+        startRuneLite();
+    }
+
+    private void startRuneLite() {
         ensureJreAsync(() -> {
             File jar = new File(getFilesDir(), JAR_NAME);
             if (jar.exists() && jar.length() > 0 && isValidJar(jar)) {
