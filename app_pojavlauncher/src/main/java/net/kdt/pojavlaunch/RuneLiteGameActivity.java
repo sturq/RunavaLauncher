@@ -365,6 +365,18 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                         result = "probe threw: " + t;
                     }
                     Log.i("RuneLiteGame", "GL probe:\n" + result);
+                    // Also to disk: the JVM writes a lot when it is unhappy, and
+                    // the logcat buffer does not survive that.
+                    try {
+                        java.io.File out = new java.io.File(
+                                getExternalFilesDir(null), "gl-probe-result.txt");
+                        try (java.io.FileWriter w = new java.io.FileWriter(out)) {
+                            w.write(result);
+                        }
+                        Log.i("RuneLiteGame", "GL probe written to " + out);
+                    } catch (Throwable t) {
+                        Log.w("RuneLiteGame", "could not write the probe result", t);
+                    }
                     final String shown = result;
                     mUiHandler.post(() -> new android.app.AlertDialog.Builder(RuneLiteGameActivity.this)
                         .setTitle("GL probe")
@@ -379,7 +391,10 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
 
             @Override
             public void surfaceDestroyed(android.view.SurfaceHolder holder) {
-                JREUtils.releaseBridgeWindow();
+                // Deliberately not releasing the bridge window. pojavInit acquires
+                // it as well, and releasing here took the JVM down with
+                // SIGBUS inside releaseBridgeWindow on the way out. The probe runs
+                // once per launch, so one window reference is not worth a crash.
             }
         });
     }
