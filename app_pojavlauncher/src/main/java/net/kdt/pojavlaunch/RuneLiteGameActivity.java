@@ -865,6 +865,10 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                     // And its GL entry points come from the zink/GLX shim, not from
                     // a system libGL that Android does not have.
                     javaArgList.add("-Dorg.lwjgl.opengl.libname=libglxshim.so");
+                    // LWJGL says which paths it tries and why one is rejected,
+                    // which beats inferring it from the one failure it reports.
+                    javaArgList.add("-Dorg.lwjgl.util.Debug=true");
+                    javaArgList.add("-Dorg.lwjgl.util.DebugLoader=true");
                 }
                 javaArgList.add("-XX:+IgnoreUnrecognizedVMOptions");
                 javaArgList.add("-XX:Tier4MinInvocationThreshold=150");
