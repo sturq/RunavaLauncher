@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <dlfcn.h>
+#include <inttypes.h>
 #include <EGL/egl.h>
 
 #define GL_VENDOR                   0x1F00
@@ -66,6 +67,19 @@ Java_net_kdt_pojavlaunch_GlProbe_probeDesktopGL(JNIEnv *env, jclass clazz, jstri
        that only gets set up for the JVM. */
     open_in(libDir, "libcutils.so", RTLD_GLOBAL | RTLD_NOW);
     open_in(libDir, "libglapi.so", RTLD_GLOBAL | RTLD_NOW);
+
+    /* This Mesa is patched to take the Vulkan loader as a pointer in the
+       environment rather than dlopening it itself, which is what zink needs to
+       come up at all. Without it eglInitialize returns EGL_NOT_INITIALIZED. */
+    void *vulkan = dlopen("libvulkan.so", RTLD_LAZY | RTLD_LOCAL);
+    if (vulkan == NULL) {
+        snprintf(out, sizeof(out), "libvulkan.so did not load: %s",
+                 str_or(dlerror(), "no dlerror"));
+        goto done;
+    }
+    char vulkanPtr[64];
+    snprintf(vulkanPtr, sizeof(vulkanPtr), "%" PRIxPTR, (uintptr_t) vulkan);
+    setenv("VULKAN_PTR", vulkanPtr, 1);
 
     void *egl = open_in(libDir, "libEGL_mesa.so", RTLD_GLOBAL | RTLD_NOW);
     if (egl == NULL) {
