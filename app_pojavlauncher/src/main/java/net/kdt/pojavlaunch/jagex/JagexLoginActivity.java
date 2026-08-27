@@ -120,28 +120,30 @@ public class JagexLoginActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 view.evaluateJavascript("document.title",
-                    title -> Log.i(TAG, "loaded " + url + " title=" + title));
+                    title -> Log.i(TAG, "loaded " + redact(url) + " title=" + title));
             }
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request,
                                         android.webkit.WebResourceError error) {
                 Log.e(TAG, "load error " + error.getErrorCode() + " " + error.getDescription()
-                    + " for " + request.getUrl());
+                    + " for " + redact(request.getUrl().toString()));
             }
 
             @Override
             public void onReceivedHttpError(WebView view, WebResourceRequest request,
                                             android.webkit.WebResourceResponse response) {
                 if (!request.isForMainFrame()) return;
-                Log.e(TAG, "HTTP " + response.getStatusCode() + " for " + request.getUrl());
+                Log.e(TAG, "HTTP " + response.getStatusCode()
+                    + " for " + redact(request.getUrl().toString()));
             }
         });
 
         mWeb.setWebChromeClient(new android.webkit.WebChromeClient() {
             @Override
             public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
-                Log.i(TAG, "console: " + message.message() + " @" + message.sourceId());
+                Log.i(TAG, "console: " + message.message()
+                    + " @" + redact(message.sourceId()));
                 return true;
             }
         });
@@ -158,7 +160,7 @@ public class JagexLoginActivity extends Activity {
 
     private boolean intercept(String url) {
         if (url == null || mBusy) return false;
-        Log.i(TAG, "navigating to " + url);
+        Log.i(TAG, "navigating to " + redact(url));
         if (url.startsWith("jagex:")) {
             mBusy = true;
             onLauncherRedirect(url.substring("jagex:".length()));
@@ -348,6 +350,25 @@ public class JagexLoginActivity extends Activity {
         if (parts.length < 2) throw new IllegalStateException("malformed id_token");
         return new JSONObject(new String(
             Base64.decode(parts[1], Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP), "UTF-8"));
+    }
+
+    /** Scheme, host and path only. The query and fragment of these URLs carry the
+     *  authorization code and the id_token, and logcat is world-readable to any
+     *  process holding READ_LOGS. */
+    private static String redact(String url) {
+        if (url == null) return "null";
+        // jagex:code=...,state=... carries the code with no query separator at all.
+        if (url.startsWith("jagex:")) return "jagex:<redacted>";
+        int cut = url.length();
+        for (int i = 0; i < cut; i++) {
+            char c = url.charAt(i);
+            if (c == '?' || c == '#') {
+                cut = i;
+                break;
+            }
+        }
+        String head = url.substring(0, cut);
+        return cut == url.length() ? head : head + "?<redacted>";
     }
 
     /** Pull a value out of a "a=1,b=2" or "a=1&b=2" parameter blob. */
