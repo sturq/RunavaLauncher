@@ -174,8 +174,12 @@ public class JagexLoginActivity extends Activity {
             Toast.makeText(this, R.string.jagex_paste_invalid, Toast.LENGTH_LONG).show();
             return;
         }
+        // The state has to be there and has to be ours. The clipboard is read
+        // automatically on the way back into the app, so without this check an
+        // address planted by something else would silently sign the user into
+        // someone else's account.
         String state = param(fragment, "state");
-        if (state != null && !mState.equals(state)) {
+        if (state == null || !mState.equals(state)) {
             Toast.makeText(this, R.string.jagex_paste_stale, Toast.LENGTH_LONG).show();
             return;
         }
