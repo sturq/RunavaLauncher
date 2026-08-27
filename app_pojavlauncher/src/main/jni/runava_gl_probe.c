@@ -56,6 +56,10 @@ Java_net_kdt_pojavlaunch_GlProbe_probeDesktopGL(JNIEnv *env, jclass clazz, jstri
 
     /* Mesa reads these when it picks a driver, so they have to be in place
        before eglInitialize rather than merely before the JVM. */
+    /* Mesa's driver search path is compiled in, and this build was made on a CI
+       runner, so it points at /home/runner/... and finds nothing. libzink_dri.so
+       ships in the APK next to everything else. */
+    setenv("LIBGL_DRIVERS_PATH", libDir, 1);
     setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1);
     setenv("GALLIUM_DRIVER", "zink", 1);
     setenv("MESA_ANDROID_NO_KMS_SWRAST", "1", 1);
