@@ -154,7 +154,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // DisplayMetrics (which lagged the actual screen on rotation).
         AWTCanvasView.setVisibleRegionListener((vw, vh) ->
                 writeInputRequest("RESIZE " + vw + " " + vh));
-        AWTCanvasView.HIDE_FPS_OVERLAY = true;
         AWTCanvasView.TRANSPARENT_BACKGROUND = true;
         setContentView(R.layout.activity_runelite_game);
 

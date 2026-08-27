@@ -1,7 +1,10 @@
 #include <jni.h>
 #include <assert.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <android/native_window.h>
+#include <android/native_window_jni.h>
 
 static JavaVM* dalvikJavaVMPtr;
 
@@ -80,48 +83,102 @@ JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_AWTInputBridge_nativeSendData(JN
 // TODO: check for memory leaks
 // int printed = 0;
 int threadAttached = 0;
-JNIEXPORT jintArray JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_renderAWTScreenFrame(JNIEnv* env, jclass clazz /*, jobject canvas, jint width, jint height */) {
+
+/* The surface the AWT frame is written into, held across frames. */
+static ANativeWindow *awtWindow = NULL;
+static int awtWindowWidth = -1;
+static int awtWindowHeight = -1;
+
+JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_setAWTSurface(JNIEnv* env, jclass clazz, jobject surface) {
+    if (awtWindow != NULL) {
+        ANativeWindow_release(awtWindow);
+        awtWindow = NULL;
+        awtWindowWidth = awtWindowHeight = -1;
+    }
+    if (surface != NULL) {
+        awtWindow = ANativeWindow_fromSurface(env, surface);
+    }
+}
+
+/* Look up CTCScreen.getCurrentScreenRGB once. Cacio ships under two different
+   package names depending on which build is installed. */
+static int resolveGetRGB(void) {
+    if (method_GetRGB != NULL) return 1;
+    class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(runtimeJNIEnvPtr_GRAPHICS, "net/java/openjdk/cacio/ctc/CTCScreen");
+    if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
+        (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
+        class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(runtimeJNIEnvPtr_GRAPHICS, "com/github/caciocavallosilano/cacio/ctc/CTCScreen");
+    }
+    if (class_CTCScreen == NULL) return 0;
+    method_GetRGB = (*runtimeJNIEnvPtr_GRAPHICS)->GetStaticMethodID(runtimeJNIEnvPtr_GRAPHICS, class_CTCScreen, "getCurrentScreenRGB", "()[I");
+    return method_GetRGB != NULL;
+}
+
+/*
+ * Write the current AWT frame straight into the surface buffer.
+ *
+ * This used to hand a fresh jintArray back to Java, which then went through
+ * Bitmap.setPixels and Canvas.drawBitmap: four copies of the frame per frame,
+ * plus a 1.7 MB allocation per frame at 720x600. Measured on a Pixel 8, the
+ * thread doing that cost as much CPU as the entire game did rendering.
+ * ANativeWindow_lock lets the pixels be converted once, on the way in.
+ *
+ * Cacio hands out 0xAARRGGBB ints; the surface wants R in the low byte, so red
+ * and blue are swapped as they are written. `opaque` forces alpha for the
+ * callers that used to clear the buffer to black first.
+ *
+ * Returns true when a frame was posted. False means AWT had nothing new, and
+ * the surface keeps showing the last frame.
+ */
+JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreenFrame(
+        JNIEnv* env, jclass clazz, jint canvasWidth, jint visibleWidth, jint visibleHeight, jboolean opaque) {
+    if (awtWindow == NULL) return JNI_FALSE;
     if (runtimeJNIEnvPtr_GRAPHICS == NULL) {
-        if (runtimeJavaVMPtr == NULL) {
-            return NULL;
-        } else {
-            (*runtimeJavaVMPtr)->AttachCurrentThread(runtimeJavaVMPtr, &runtimeJNIEnvPtr_GRAPHICS, NULL);
-        }
+        if (runtimeJavaVMPtr == NULL) return JNI_FALSE;
+        (*runtimeJavaVMPtr)->AttachCurrentThread(runtimeJavaVMPtr, &runtimeJNIEnvPtr_GRAPHICS, NULL);
+    }
+    if (!resolveGetRGB()) return JNI_FALSE;
+
+    jintArray jreRgbArray = (jintArray) (*runtimeJNIEnvPtr_GRAPHICS)->CallStaticObjectMethod(
+        runtimeJNIEnvPtr_GRAPHICS, class_CTCScreen, method_GetRGB);
+    if (jreRgbArray == NULL) return JNI_FALSE;
+
+    if (visibleWidth != awtWindowWidth || visibleHeight != awtWindowHeight) {
+        ANativeWindow_setBuffersGeometry(awtWindow, visibleWidth, visibleHeight, WINDOW_FORMAT_RGBA_8888);
+        awtWindowWidth = visibleWidth;
+        awtWindowHeight = visibleHeight;
     }
 
-    int *rgbArray;
-    jintArray jreRgbArray, androidRgbArray;
-  
-    if (method_GetRGB == NULL) {
-        class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(runtimeJNIEnvPtr_GRAPHICS, "net/java/openjdk/cacio/ctc/CTCScreen");
-        if ((*runtimeJNIEnvPtr_GRAPHICS)->ExceptionCheck(runtimeJNIEnvPtr_GRAPHICS) == JNI_TRUE) {
-            (*runtimeJNIEnvPtr_GRAPHICS)->ExceptionClear(runtimeJNIEnvPtr_GRAPHICS);
-            class_CTCScreen = (*runtimeJNIEnvPtr_GRAPHICS)->FindClass(runtimeJNIEnvPtr_GRAPHICS, "com/github/caciocavallosilano/cacio/ctc/CTCScreen");
-        }
-        assert(class_CTCScreen != NULL);
-        method_GetRGB = (*runtimeJNIEnvPtr_GRAPHICS)->GetStaticMethodID(runtimeJNIEnvPtr_GRAPHICS, class_CTCScreen, "getCurrentScreenRGB", "()[I");
-        assert(method_GetRGB != NULL);
+    ANativeWindow_Buffer buf;
+    if (ANativeWindow_lock(awtWindow, &buf, NULL) != 0) {
+        (*runtimeJNIEnvPtr_GRAPHICS)->DeleteLocalRef(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
+        return JNI_FALSE;
     }
-    jreRgbArray = (jintArray) (*runtimeJNIEnvPtr_GRAPHICS)->CallStaticObjectMethod(
-        runtimeJNIEnvPtr_GRAPHICS,
-        class_CTCScreen,
-        method_GetRGB
-    );
-    if (jreRgbArray == NULL) {
-        return NULL;
-    }
-    
-    // Copy JRE RGB array memory to Android.
-    int arrayLength = (*runtimeJNIEnvPtr_GRAPHICS)->GetArrayLength(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
-    rgbArray = (*runtimeJNIEnvPtr_GRAPHICS)->GetIntArrayElements(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, 0);
-    androidRgbArray = (*env)->NewIntArray(env, arrayLength);
-    (*env)->SetIntArrayRegion(env, androidRgbArray, 0, arrayLength, rgbArray);
 
-    (*runtimeJNIEnvPtr_GRAPHICS)->ReleaseIntArrayElements(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, rgbArray, 0);
-    // (*env)->DeleteLocalRef(env, androidRgbArray);
-    // free(rgbArray);
-    
-    return androidRgbArray;
+    jboolean posted = JNI_FALSE;
+    jint *src = (*runtimeJNIEnvPtr_GRAPHICS)->GetPrimitiveArrayCritical(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, NULL);
+    if (src != NULL) {
+        int w = buf.width  < visibleWidth  ? buf.width  : visibleWidth;
+        int h = buf.height < visibleHeight ? buf.height : visibleHeight;
+        uint32_t forceAlpha = opaque ? 0xFF000000u : 0u;
+        for (int y = 0; y < h; y++) {
+            const uint32_t *s = (const uint32_t *) src + (size_t) y * (size_t) canvasWidth;
+            uint32_t *d = (uint32_t *) buf.bits + (size_t) y * (size_t) buf.stride;
+            for (int x = 0; x < w; x++) {
+                uint32_t p = s[x];
+                d[x] = (p & 0xFF00FF00u) | ((p >> 16) & 0x000000FFu) | ((p & 0x000000FFu) << 16) | forceAlpha;
+            }
+        }
+        (*runtimeJNIEnvPtr_GRAPHICS)->ReleasePrimitiveArrayCritical(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, src, JNI_ABORT);
+        posted = JNI_TRUE;
+    }
+
+    ANativeWindow_unlockAndPost(awtWindow);
+    /* The old code never released this. Nothing frees local refs on a thread
+       attached to the runtime VM outside a native call boundary, so one
+       reference to a 1.7 MB array leaked into the JVM's handle table per frame. */
+    (*runtimeJNIEnvPtr_GRAPHICS)->DeleteLocalRef(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
+    return posted;
 }
 
 JNIEXPORT void JNICALL Java_net_java_openjdk_cacio_ctc_CTCClipboard_nQuerySystemClipboard(JNIEnv *env, jclass clazz) {

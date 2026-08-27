@@ -564,7 +564,13 @@ public class JREUtils {
     public static native void initializeHooks();
     public static native void setupExitMethod(Context context);
     // Obtain AWT screen pixels to render on Android SurfaceView
-    public static native int[] renderAWTScreenFrame(/* Object canvas, int width, int height */);
+    /** Hand the AWT renderer the surface to write into, or null to let go of it. */
+    public static native void setAWTSurface(android.view.Surface surface);
+
+    /** Write the current AWT frame into that surface and post it. False means AWT
+     *  had nothing new and the surface keeps showing the previous frame. */
+    public static native boolean blitAWTScreenFrame(int canvasWidth, int visibleWidth,
+                                                    int visibleHeight, boolean opaque);
     static {
         System.loadLibrary("exithook");
         System.loadLibrary("pojavexec");

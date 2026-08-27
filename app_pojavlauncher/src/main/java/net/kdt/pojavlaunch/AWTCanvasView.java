@@ -21,12 +21,10 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     public static volatile int AWT_VISIBLE_WIDTH = 720;
     public static volatile int AWT_VISIBLE_HEIGHT = 600;
 
-    /** When true, suppress the FPS overlay (drawn directly onto the Surface in run()). */
-    public static boolean HIDE_FPS_OVERLAY = false;
-
-    /** When true, clear with transparent instead of opaque black per-frame. Used by the
-     *  hybrid RuneLite activity so the GL surface underneath shows through where Cacio
-     *  doesn't paint pixels (e.g. the OSRS 3D game canvas area when GPU plugin is on). */
+    /** When true, keep whatever alpha AWT painted instead of forcing the frame opaque.
+     *  Used by the hybrid RuneLite activity so the GL surface underneath shows through
+     *  where Cacio doesn't paint pixels (e.g. the OSRS 3D game canvas area when the
+     *  GPU plugin is on). */
     public static boolean TRANSPARENT_BACKGROUND = false;
 
     /** Set the Cacio managed-screen / bitmap size before this view is constructed.
@@ -40,13 +38,7 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
             AWT_VISIBLE_HEIGHT = h;
         }
     }
-    private static final int MAX_SIZE = 100;
-    private static final double NANOS = 1000000000.0;
     private boolean mIsDestroyed = false;
-    private final TextPaint mFpsPaint;
-
-    // Temporary count fps https://stackoverflow.com/a/13729241
-    private final LinkedList<Long> mTimes = new LinkedList<Long>(){{add(System.nanoTime());}};
     
     public AWTCanvasView(Context ctx) {
         this(ctx, null);
@@ -55,11 +47,6 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     public AWTCanvasView(Context ctx, AttributeSet attrs) {
         super(ctx, attrs);
         
-        mFpsPaint = new TextPaint();
-        mFpsPaint.setColor(Color.WHITE);
-        mFpsPaint.setTextSize(20);
-
-
         setSurfaceTextureListener(this);
 
         post(this::refreshSize);
@@ -104,18 +91,17 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                 Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT));
     }
 
-    /** Target frame interval. ~16.67 ms = 60 Hz. The Cacio render → setPixels → drawBitmap
-     *  pipeline is all CPU; running it at 300 FPS like the uncapped loop did wastes ~5x the
-     *  pixel work since the screen only refreshes at 60 Hz anyway. Capping frees that CPU
-     *  budget for the AWT scene paint itself, which is what makes RuneLite feel laggy. */
+    /** Target frame interval. ~16.67 ms = 60 Hz. Reading a frame out of Cacio and
+     *  converting it is all CPU; running it at 300 FPS like the uncapped loop did wastes
+     *  ~5x the pixel work since the screen only refreshes at 60 Hz anyway. Capping frees
+     *  that CPU budget for the AWT scene paint itself, which is what makes RuneLite feel
+     *  laggy. */
     private static final long FRAME_INTERVAL_NS = 16_666_667L;
 
     @Override
     public void run() {
-        Canvas canvas;
         Surface surface = new Surface(getSurfaceTexture());
-        Bitmap rgbArrayBitmap = Bitmap.createBitmap(AWT_CANVAS_WIDTH, AWT_CANVAS_HEIGHT, Bitmap.Config.ARGB_8888);
-        Paint paint = new Paint();
+        JREUtils.setAWTSurface(surface);
         long nextFrameNs = System.nanoTime();
         try {
             while (!mIsDestroyed && surface.isValid()) {
@@ -132,66 +118,25 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                     nextFrameNs += FRAME_INTERVAL_NS;
                 }
 
-                int[] rgbArray = JREUtils.renderAWTScreenFrame(/* canvas, mWidth, mHeight */);
-                // If RuneLite hasn't repainted, the JVM-side AWT returns null.
-                // Skip the whole lockCanvas / draw / post pipeline — the
-                // TextureView keeps showing the previously posted frame, which
-                // is the correct visual when nothing changed. Big idle/AFK
-                // battery win, no visible cost.
-                if (rgbArray == null && HIDE_FPS_OVERLAY) continue;
-
-                // Keep the surface buffer sized to the current visible region.
-                // On orientation change AWT_VISIBLE_* changes, and the next
-                // frame here picks it up so the buffer matches before we draw.
-                getSurfaceTexture().setDefaultBufferSize(
+                // The frame is converted and posted entirely in native code.
+                // The visible region is passed every frame because it changes on
+                // rotation; the native side only resizes the buffer when it
+                // actually differs.
+                //
+                // False means RuneLite has not repainted. Nothing is posted and
+                // the TextureView keeps showing the previous frame, which is the
+                // correct visual and a large idle battery win.
+                JREUtils.blitAWTScreenFrame(
+                        AWT_CANVAS_WIDTH,
                         Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH),
-                        Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT));
-                canvas = surface.lockCanvas(null);
-                if (TRANSPARENT_BACKGROUND) {
-                    canvas.drawColor(android.graphics.Color.TRANSPARENT,
-                            android.graphics.PorterDuff.Mode.CLEAR);
-                } else {
-                    canvas.drawRGB(0, 0, 0);
-                }
-                boolean mDrawing = rgbArray != null;
-                if (rgbArray != null) {
-                    int vw = Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH);
-                    int vh = Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT);
-                    canvas.save();
-                    rgbArrayBitmap.setPixels(rgbArray, 0, AWT_CANVAS_WIDTH, 0, 0, vw, vh);
-                    // Draw the visible region to fill the surface buffer 1:1.
-                    // Surface buffer size matches the visible region (set in
-                    // onSurfaceTextureAvailable / onSurfaceTextureSizeChanged),
-                    // and the TextureView scales the whole buffer to the view's
-                    // aspect-fit dimensions. Using view coords here would leave
-                    // most of the buffer empty.
-                    android.graphics.Rect src = new android.graphics.Rect(0, 0, vw, vh);
-                    android.graphics.Rect dst = new android.graphics.Rect(0, 0, vw, vh);
-                    canvas.drawBitmap(rgbArrayBitmap, src, dst, paint);
-                    canvas.restore();
-                }
-                if (!HIDE_FPS_OVERLAY) {
-                    canvas.drawText("FPS: " + (Math.round(fps() * 10) / 10) + ", drawing=" + mDrawing, 0, 20, mFpsPaint);
-                }
-                surface.unlockCanvasAndPost(canvas);
+                        Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT),
+                        !TRANSPARENT_BACKGROUND);
             }
         } catch (Throwable throwable) {
             Tools.showError(getContext(), throwable);
         }
-        rgbArrayBitmap.recycle();
+        JREUtils.setAWTSurface(null);
         surface.release();
-    }
-
-    /** Calculates and returns frames per second */
-    private double fps() {
-        long lastTime = System.nanoTime();
-        double difference = (lastTime - mTimes.getFirst()) / NANOS;
-        mTimes.addLast(lastTime);
-        int size = mTimes.size();
-        if (size > MAX_SIZE) {
-            mTimes.removeFirst();
-        }
-        return difference > 0 ? mTimes.size() / difference : 0.0;
     }
 
     /** Listener for visible-region changes; the activity uses this to forward
