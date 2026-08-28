@@ -187,31 +187,33 @@ static int loadEgl(JNIEnv *env) {
     return 1;
 }
 
-/* Ask through the same path LWJGL will use, and report what comes back. If this
-   disagrees with the context we just made current, the shim is talking to a
-   different EGL. */
+/* Ask through the same path LWJGL will use and report what comes back, one step
+   at a time. Nothing resolved here is called: a bad pointer that is not null
+   takes the process down, which is exactly what LWJGL then does to itself. */
 static void reportWhatLwjglWillSee(void) {
+    rlawtNote("checking what LWJGL will resolve");
+
     void *shim = openLib("libglxshim.so", RTLD_GLOBAL | RTLD_NOW);
     if (shim == NULL) {
         rlawtNote("libglxshim.so did not load, LWJGL will find no GL");
         return;
     }
+    rlawtNote("libglxshim.so loaded");
+
     void *(*getProc)(const char *) = dlsym(shim, "glXGetProcAddress");
     if (getProc == NULL) {
         rlawtNote("libglxshim.so has no glXGetProcAddress");
         return;
     }
-    const char *(*getString)(unsigned int) = getProc("glGetString");
-    if (getString == NULL) {
-        rlawtNote("glXGetProcAddress returned null for glGetString: the shim is "
-                  "not bound to the EGL our context lives in");
-        return;
+    rlawtNote("glXGetProcAddress found");
+
+    char msg[192];
+    const char *names[] = {"glGetString", "glClear", "glGenBuffers"};
+    for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        void *fn = getProc(names[i]);
+        snprintf(msg, sizeof(msg), "%s resolves to %p", names[i], fn);
+        rlawtNote(msg);
     }
-    const char *version = getString(0x1F02);
-    char msg[256];
-    snprintf(msg, sizeof(msg), "through glXGetProcAddress, GL_VERSION = %s",
-             version != NULL ? version : "(null)");
-    rlawtNote(msg);
 }
 
 /*
