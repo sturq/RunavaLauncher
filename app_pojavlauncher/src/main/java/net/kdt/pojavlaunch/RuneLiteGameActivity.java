@@ -157,7 +157,18 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         int longerEdge = Math.max(dm.widthPixels, dm.heightPixels);
         int shorterEdge = Math.min(dm.widthPixels, dm.heightPixels);
         int minCanvasForRuneLite = 800 * longerEdge / Math.max(1, shorterEdge);
-        int canvasDim = Math.max((longerEdge * 3) / 5, minCanvasForRuneLite);
+        // In GPU mode take the longer edge whole, so the visible region comes out
+        // as exactly the screen in both orientations and the client draws in real
+        // pixels. Everything then shares one coordinate space: no scaling between
+        // AWT and GL, and the scene buffer can stay at the view's own size, which
+        // is the only size it renders at — shrinking a SurfaceTexture below its
+        // view produced 80 seconds of black frames with EGL still reporting
+        // success. The 60% cap stays for the software path, where the AWT blit
+        // rasterises every pixel on the CPU and is the thing that cap protects;
+        // with the GPU plugin the AWT layer only paints the window chrome.
+        int canvasDim = gpuModeEnabled()
+                ? longerEdge
+                : Math.max((longerEdge * 3) / 5, minCanvasForRuneLite);
         AWTCanvasView.setManagedScreenSize(canvasDim, canvasDim);
         // Single source of truth: AWTCanvasView.refreshSize() computes the
         // visible region from the parent view's measured pixels and fires
@@ -219,15 +230,16 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture available " + w + "x" + h);
-                    sizeSceneBuffer(t, w, h);
                     JREUtils.setupBridgeWindow(new android.view.Surface(t));
                     mSceneSurfaceReady.countDown();
                 }
 
                 @Override
                 public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
+                    // Left at the view's own size on purpose; see the canvasDim
+                    // comment. The client is told about the new size through the
+                    // RESIZE IPC that AWTCanvasView.refreshSize fires.
                     gpuLog("scene texture resized to " + w + "x" + h);
-                    sizeSceneBuffer(t, w, h);
                 }
 
                 @Override
@@ -517,24 +529,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     /** GPU mode is opt-in while it is being brought up, so a broken experiment
      *  cannot take the working software path with it. Toggled by creating or
      *  deleting "gpu" in the app's external files directory. */
-    /** Give the scene buffer the same dimensions the AWT canvas uses, not the
-     *  screen's. RuneLite draws in AWT pixels, so a screen-sized buffer leaves
-     *  the scene in the bottom-left corner at ~76% scale with the rest black.
-     *  Sized this way both layers are in one coordinate space and the
-     *  TextureView scales the result up to the screen, exactly as
-     *  AWTCanvasView already does for the software path.
-     *
-     *  Same formula as AWTCanvasView.refreshSize, and deliberately not read
-     *  from its statics: those are filled by a posted layout pass that has not
-     *  necessarily run when the surface arrives. */
-    private static void sizeSceneBuffer(android.graphics.SurfaceTexture t, int w, int h) {
-        if (w <= 0 || h <= 0) return;
-        int dim = AWTCanvasView.AWT_CANVAS_WIDTH;
-        int bw = w >= h ? dim : Math.max(1, dim * w / h);
-        int bh = w >= h ? Math.max(1, dim * h / w) : dim;
-        t.setDefaultBufferSize(bw, bh);
-    }
-
     private boolean gpuModeEnabled() {
         return new File(getExternalFilesDir(null), "gpu").exists();
     }
