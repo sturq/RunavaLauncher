@@ -57,6 +57,7 @@ typedef EGLBoolean (*fn_swapInterval)(EGLDisplay, EGLint);
 typedef EGLBoolean (*fn_destroyContext)(EGLDisplay, EGLContext);
 typedef EGLBoolean (*fn_destroySurface)(EGLDisplay, EGLSurface);
 typedef EGLint (*fn_getError)(void);
+typedef EGLBoolean (*fn_querySurface)(EGLDisplay, EGLSurface, EGLint, EGLint *);
 
 static struct {
     int loaded;
@@ -72,6 +73,7 @@ static struct {
     fn_destroyContext destroyContext;
     fn_destroySurface destroySurface;
     fn_getError       getError;
+    fn_querySurface   querySurface;
 } egl;
 
 typedef struct {
@@ -168,6 +170,7 @@ static int loadEgl(JNIEnv *env) {
     egl.destroyContext      = (fn_destroyContext) dlsym(h, "eglDestroyContext");
     egl.destroySurface      = (fn_destroySurface) dlsym(h, "eglDestroySurface");
     egl.getError            = (fn_getError)       dlsym(h, "eglGetError");
+    egl.querySurface        = (fn_querySurface)   dlsym(h, "eglQuerySurface");
 
     if (!egl.getDisplay || !egl.initialize || !egl.bindAPI || !egl.chooseConfig
         || !egl.createContext || !egl.createWindowSurface || !egl.makeCurrent
@@ -421,7 +424,25 @@ JNIEXPORT void JNICALL
 Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     AndroidAWTContext *ctx = ctxOf(env, self);
     if (ctx == NULL || ctx->dpy == NULL || ctx->surface == NULL) return;
-    egl.swapBuffers(ctx->dpy, ctx->surface);
+    EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
+    /* The first swap and then one a minute: enough to tell "no frames at all"
+       apart from "frames of the wrong size" without filling the log. */
+    static long swaps = 0;
+    if (swaps == 0 || (swaps % 600) == 0) {
+        EGLint sw = -1, sh = -1;
+        if (egl.querySurface != NULL) {
+            egl.querySurface(ctx->dpy, ctx->surface, EGL_WIDTH, &sw);
+            egl.querySurface(ctx->dpy, ctx->surface, EGL_HEIGHT, &sh);
+        }
+        char msg[192];
+        snprintf(msg, sizeof(msg),
+                 "swap #%ld ok=%d err=0x%04x surface %dx%d window %dx%d",
+                 swaps, (int) ok, egl.getError(), sw, sh,
+                 ANativeWindow_getWidth(ctx->window),
+                 ANativeWindow_getHeight(ctx->window));
+        rlawtNote(msg);
+    }
+    swaps++;
 }
 
 /* The scene renders into the window's own buffer, so the default framebuffer is

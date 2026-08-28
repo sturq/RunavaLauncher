@@ -189,6 +189,13 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             // rlawt through pojav_environ->pojavWindow. It sits behind the AWT
             // canvas, which stays transparent where Cacio paints nothing.
             mGlSurface.setVisibility(View.VISIBLE);
+            // TextureView is opaque by default, and an opaque layer is composited
+            // as if nothing were behind it: TRANSPARENT_BACKGROUND makes the blit
+            // keep AWT's alpha, but the compositor then throws that alpha away and
+            // the scene underneath never shows. Only GPU mode needs the blend; the
+            // software path paints every pixel itself and an opaque layer is
+            // cheaper there.
+            mCanvas.setOpaque(false);
             // A TextureView, not a SurfaceView, and for the reason AWTCanvasView
             // gives a few lines further down: a SurfaceView's surface belongs to
             // the compositor and is destroyed and recreated freely. It was being
