@@ -88,6 +88,7 @@ typedef struct {
     int stencilDepth;
     int multisamples;
     int insetX, insetY;
+    int rebuiltFor;             /* window size the surface was last built for */
 } AndroidAWTContext;
 
 /* logcat overflows during a client startup, so anything worth reading also goes
@@ -429,10 +430,62 @@ Java_net_runelite_rlawt_AWTContext_detachCurrent(JNIEnv *env, jobject self) {
     egl.makeCurrent(ctx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 }
 
+/* Rotating the device resizes the ANativeWindow under a surface EGL has already
+   built, and this driver does not follow: the surface keeps reporting the old
+   geometry, every swap after that reports success and reaches nothing, and the
+   screen is black from the first rotation onwards. Since every launch rotates
+   at least once while the client is still starting, that is the whole of the
+   black screen. Rebuild the surface whenever the window has moved on. */
+static void rebuildSurfaceIfWindowResized(AndroidAWTContext *ctx) {
+    if (egl.querySurface == NULL || ctx->window == NULL) return;
+
+    int ww = ANativeWindow_getWidth(ctx->window);
+    int wh = ANativeWindow_getHeight(ctx->window);
+    if (ww <= 0 || wh <= 0) return;
+
+    EGLint sw = 0, sh = 0;
+    egl.querySurface(ctx->dpy, ctx->surface, EGL_WIDTH, &sw);
+    egl.querySurface(ctx->dpy, ctx->surface, EGL_HEIGHT, &sh);
+    if (ww == sw && wh == sh) return;
+
+    /* One attempt per distinct window size. If the driver hands back a surface
+       that still disagrees, retrying every frame would be a rebuild loop at
+       60 Hz for as long as the mismatch lasts. */
+    int key = ww * 65536 + wh;
+    if (ctx->rebuiltFor == key) return;
+    ctx->rebuiltFor = key;
+
+    EGLSurface fresh = egl.createWindowSurface(ctx->dpy, ctx->config,
+                                               (EGLNativeWindowType) ctx->window, NULL);
+    char msg[160];
+    if (fresh == EGL_NO_SURFACE) {
+        snprintf(msg, sizeof(msg), "surface rebuild for %dx%d failed: 0x%04x",
+                 ww, wh, egl.getError());
+        rlawtNote(msg);
+        return;
+    }
+    if (!egl.makeCurrent(ctx->dpy, fresh, fresh, ctx->context)) {
+        snprintf(msg, sizeof(msg), "rebuilt surface would not go current: 0x%04x",
+                 egl.getError());
+        rlawtNote(msg);
+        egl.destroySurface(ctx->dpy, fresh);
+        return;
+    }
+    if (ctx->surface != NULL && egl.destroySurface != NULL) {
+        egl.destroySurface(ctx->dpy, ctx->surface);
+    }
+    ctx->surface = fresh;
+    snprintf(msg, sizeof(msg), "surface rebuilt %dx%d -> %dx%d after a window resize",
+             sw, sh, ww, wh);
+    rlawtNote(msg);
+}
+
 JNIEXPORT void JNICALL
 Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     AndroidAWTContext *ctx = ctxOf(env, self);
     if (ctx == NULL || ctx->dpy == NULL || ctx->surface == NULL) return;
+
+    rebuildSurfaceIfWindowResized(ctx);
 
     /* The first swap and then one every ten seconds: enough to tell "no frames
        at all" from "frames of the wrong size" from "frames that are black",
