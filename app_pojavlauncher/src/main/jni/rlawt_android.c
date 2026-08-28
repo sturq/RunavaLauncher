@@ -175,8 +175,43 @@ static int loadEgl(JNIEnv *env) {
         rlawtThrow(env, "rlawt: libEGL_mesa.so is missing EGL entry points");
         return 0;
     }
+    /* Load the shim ourselves, after Mesa's EGL is global. LWJGL resolves every
+       GL entry point through its glXGetProcAddress, and the shim is linked
+       against no EGL at all: it picks eglGetProcAddress out of the global
+       namespace. Android's own libEGL is always there, so if the shim is loaded
+       first it can bind to the system GLES driver instead of Mesa, which knows
+       nothing of our context and answers null for everything. */
+    openLib("libglxshim.so", RTLD_GLOBAL | RTLD_NOW);
+
     egl.loaded = 1;
     return 1;
+}
+
+/* Ask through the same path LWJGL will use, and report what comes back. If this
+   disagrees with the context we just made current, the shim is talking to a
+   different EGL. */
+static void reportWhatLwjglWillSee(void) {
+    void *shim = openLib("libglxshim.so", RTLD_GLOBAL | RTLD_NOW);
+    if (shim == NULL) {
+        rlawtNote("libglxshim.so did not load, LWJGL will find no GL");
+        return;
+    }
+    void *(*getProc)(const char *) = dlsym(shim, "glXGetProcAddress");
+    if (getProc == NULL) {
+        rlawtNote("libglxshim.so has no glXGetProcAddress");
+        return;
+    }
+    const char *(*getString)(unsigned int) = getProc("glGetString");
+    if (getString == NULL) {
+        rlawtNote("glXGetProcAddress returned null for glGetString: the shim is "
+                  "not bound to the EGL our context lives in");
+        return;
+    }
+    const char *version = getString(0x1F02);
+    char msg[256];
+    snprintf(msg, sizeof(msg), "through glXGetProcAddress, GL_VERSION = %s",
+             version != NULL ? version : "(null)");
+    rlawtNote(msg);
 }
 
 /*
@@ -352,6 +387,7 @@ Java_net_runelite_rlawt_AWTContext_createGLContext(JNIEnv *env, jobject self) {
     }
     LOGI("GL context up and current, EGL %d.%d", major, minor);
     rlawtNote("GL context up and current");
+    reportWhatLwjglWillSee();
 }
 
 JNIEXPORT jint JNICALL
