@@ -190,6 +190,12 @@ static int loadEgl(JNIEnv *env) {
     return 1;
 }
 
+/* Enough GL to describe a frame from inside the swap: where the client is
+   drawing, and what colour actually landed there. Resolved through the same
+   shim LWJGL uses, so a null here means LWJGL sees null too. */
+static void (*gl_getIntegerv)(unsigned int, int *) = NULL;
+static void (*gl_readPixels)(int, int, int, int, unsigned int, unsigned int, void *) = NULL;
+
 /* Ask through the same path LWJGL will use and report what comes back, one step
    at a time. Nothing resolved here is called: a bad pointer that is not null
    takes the process down, which is exactly what LWJGL then does to itself. */
@@ -217,6 +223,9 @@ static void reportWhatLwjglWillSee(void) {
         snprintf(msg, sizeof(msg), "%s resolves to %p", names[i], fn);
         rlawtNote(msg);
     }
+
+    gl_getIntegerv = getProc("glGetIntegerv");
+    gl_readPixels  = getProc("glReadPixels");
 }
 
 /*
@@ -424,22 +433,55 @@ JNIEXPORT void JNICALL
 Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     AndroidAWTContext *ctx = ctxOf(env, self);
     if (ctx == NULL || ctx->dpy == NULL || ctx->surface == NULL) return;
-    EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
-    /* The first swap and then one a minute: enough to tell "no frames at all"
-       apart from "frames of the wrong size" without filling the log. */
+
+    /* The first swap and then one every ten seconds: enough to tell "no frames
+       at all" from "frames of the wrong size" from "frames that are black",
+       without filling the log. The readback has to happen before the swap,
+       because after it the back buffer is undefined. */
     static long swaps = 0;
-    if (swaps == 0 || (swaps % 600) == 0) {
+    int describe = (swaps % 600) == 0;
+    char sample[96] = "";
+    int vp[4] = {-1, -1, -1, -1};
+    if (describe) {
+        if (gl_getIntegerv != NULL) gl_getIntegerv(0x0BA2 /* GL_VIEWPORT */, vp);
+        if (gl_readPixels != NULL && vp[2] > 0 && vp[3] > 0) {
+            static unsigned char px[32 * 32 * 4];
+            int x = vp[0] + vp[2] / 2 - 16, y = vp[1] + vp[3] / 2 - 16;
+            if (x < 0) x = 0;
+            if (y < 0) y = 0;
+            memset(px, 0, sizeof(px));
+            gl_readPixels(x, y, 32, 32, 0x1908 /* GL_RGBA */,
+                          0x1401 /* GL_UNSIGNED_BYTE */, px);
+            int lit = 0, maxc = 0;
+            for (unsigned i = 0; i < 32 * 32; i++) {
+                int r = px[i * 4], g = px[i * 4 + 1], b = px[i * 4 + 2];
+                if (r | g | b) lit++;
+                if (r > maxc) maxc = r;
+                if (g > maxc) maxc = g;
+                if (b > maxc) maxc = b;
+            }
+            snprintf(sample, sizeof(sample), " centre %d/1024 lit, brightest %d", lit, maxc);
+        } else {
+            snprintf(sample, sizeof(sample), " (no readback: getIntegerv=%p readPixels=%p)",
+                     (void *) gl_getIntegerv, (void *) gl_readPixels);
+        }
+    }
+
+    EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
+
+    if (describe) {
         EGLint sw = -1, sh = -1;
         if (egl.querySurface != NULL) {
             egl.querySurface(ctx->dpy, ctx->surface, EGL_WIDTH, &sw);
             egl.querySurface(ctx->dpy, ctx->surface, EGL_HEIGHT, &sh);
         }
-        char msg[192];
+        char msg[320];
         snprintf(msg, sizeof(msg),
-                 "swap #%ld ok=%d err=0x%04x surface %dx%d window %dx%d",
+                 "swap #%ld ok=%d err=0x%04x surface %dx%d window %dx%d viewport %d,%d %dx%d%s",
                  swaps, (int) ok, egl.getError(), sw, sh,
                  ANativeWindow_getWidth(ctx->window),
-                 ANativeWindow_getHeight(ctx->window));
+                 ANativeWindow_getHeight(ctx->window),
+                 vp[0], vp[1], vp[2], vp[3], sample);
         rlawtNote(msg);
     }
     swaps++;
