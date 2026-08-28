@@ -552,13 +552,18 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         int visibleW = landscape ? dim : Math.max(1, dim * viewWidth / viewHeight);
         int visibleH = landscape ? Math.max(1, dim * viewHeight / viewWidth) : dim;
 
-        // GL's origin is the bottom left, so the scene sits in the drawable's
-        // bottom-left corner: rows viewHeight-visibleH..viewHeight once the
-        // texture is the right way up. Lift that corner to the top and scale it
-        // out to fill.
+        // The scene lands in the drawable's *top* left corner, not the bottom
+        // left that GL's own origin would suggest — measured off a frame where
+        // the client was visible, whose content began at y=7 of 2244 rather
+        // than at the 84 a bottom anchor would have put it. Assuming otherwise
+        // and translating by the difference pushed the whole scene off the top
+        // edge, which looks exactly like the renderer failing.
+        //
+        // So it is a plain scale about the origin. Both factors come out the
+        // same, because the visible region is derived from the view's own
+        // aspect: nothing is stretched.
         android.graphics.Matrix m = new android.graphics.Matrix();
         m.setScale((float) viewWidth / visibleW, (float) viewHeight / visibleH);
-        m.preTranslate(0f, -(viewHeight - visibleH));
         mGlSurface.setTransform(m);
         gpuLog("scene aligned: " + visibleW + "x" + visibleH + " of "
                 + viewWidth + "x" + viewHeight);
