@@ -190,16 +190,6 @@ static int loadEgl(JNIEnv *env) {
     return 1;
 }
 
-/* Enough GL to describe a frame from inside the swap: where the client is
-   drawing, and what colour actually landed there. Resolved through the same
-   shim LWJGL uses, so a null here means LWJGL sees null too. */
-static void (*gl_getIntegerv)(unsigned int, int *) = NULL;
-static void (*gl_readPixels)(int, int, int, int, unsigned int, unsigned int, void *) = NULL;
-static void (*gl_clearColor)(float, float, float, float) = NULL;
-static void (*gl_clear)(unsigned int) = NULL;
-static void (*gl_finish)(void) = NULL;
-static void (*gl_bindFramebuffer)(unsigned int, unsigned int) = NULL;
-static unsigned int (*gl_getError)(void) = NULL;
 
 /* Ask through the same path LWJGL will use and report what comes back, one step
    at a time. Nothing resolved here is called: a bad pointer that is not null
@@ -229,36 +219,6 @@ static void reportWhatLwjglWillSee(void) {
         rlawtNote(msg);
     }
 
-    gl_getIntegerv = getProc("glGetIntegerv");
-    gl_readPixels  = getProc("glReadPixels");
-    gl_clearColor  = getProc("glClearColor");
-    gl_clear       = getProc("glClear");
-    gl_finish      = getProc("glFinish");
-    gl_bindFramebuffer = getProc("glBindFramebuffer");
-    gl_getError    = getProc("glGetError");
-}
-
-/* Paint the surface a colour nothing else would produce, read it back, and
-   leave it on screen for one frame. This is the one thing all the black-frame
-   measurements could not distinguish: whether our context reaches the window at
-   all, or whether it reaches it fine and the client is drawing black. */
-static void proveTheSurfaceTakesPaint(AndroidAWTContext *ctx) {
-    if (gl_clearColor == NULL || gl_clear == NULL || gl_readPixels == NULL) {
-        rlawtNote("cannot probe the surface, GL entry points did not resolve");
-        return;
-    }
-    gl_clearColor(1.0f, 0.0f, 1.0f, 1.0f);
-    gl_clear(0x00004000 /* GL_COLOR_BUFFER_BIT */);
-    if (gl_finish != NULL) gl_finish();
-
-    unsigned char px[4] = {0, 0, 0, 0};
-    gl_readPixels(4, 4, 1, 1, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, px);
-    char msg[128];
-    snprintf(msg, sizeof(msg), "magenta probe reads back %d,%d,%d,%d (want 255,0,255)",
-             px[0], px[1], px[2], px[3]);
-    rlawtNote(msg);
-
-    egl.swapBuffers(ctx->dpy, ctx->surface);
 }
 
 /*
@@ -435,7 +395,6 @@ Java_net_runelite_rlawt_AWTContext_createGLContext(JNIEnv *env, jobject self) {
     LOGI("GL context up and current, EGL %d.%d", major, minor);
     rlawtNote("GL context up and current");
     reportWhatLwjglWillSee();
-    proveTheSurfaceTakesPaint(ctx);
 }
 
 JNIEXPORT jint JNICALL
@@ -467,81 +426,27 @@ JNIEXPORT void JNICALL
 Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     AndroidAWTContext *ctx = ctxOf(env, self);
     if (ctx == NULL || ctx->dpy == NULL || ctx->surface == NULL) return;
+    EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
 
-
-    /* The first swap and then one every ten seconds: enough to tell "no frames
-       at all" from "frames of the wrong size" from "frames that are black",
-       without filling the log. The readback has to happen before the swap,
-       because after it the back buffer is undefined. */
-    static long swaps = 0;
-    /* Once a second for the first half minute, then once every ten seconds. The
-       sparse sampling was aliasing against whatever flips the surface between
-       portrait and landscape and could not show the period. */
-    int describe = swaps < 1800 ? (swaps % 60) == 0 : (swaps % 600) == 0;
-    char sample[160] = "";
-    int vp[4] = {-1, -1, -1, -1};
-    EGLint sw = -1, sh = -1;
-    if (describe) {
+    /* Once, on the first frame. "The context came up" and "frames actually
+       reach the window" are different claims, and a whole debugging session
+       went into telling them apart. The sizes are here because a drawable that
+       does not match the AWT canvas is the failure that looks like a working
+       renderer drawing in the wrong place. */
+    static int reported = 0;
+    if (!reported) {
+        reported = 1;
+        EGLint sw = -1, sh = -1;
         if (egl.querySurface != NULL) {
             egl.querySurface(ctx->dpy, ctx->surface, EGL_WIDTH, &sw);
             egl.querySurface(ctx->dpy, ctx->surface, EGL_HEIGHT, &sh);
         }
-        if (gl_getIntegerv != NULL) gl_getIntegerv(0x0BA2 /* GL_VIEWPORT */, vp);
-        /* glReadPixels reads whatever is bound as GL_READ_FRAMEBUFFER, and the
-           client leaves its own FBOs bound. Every "black" reading so far may
-           have been a look into one of those rather than into the window.
-           Point the read at the window and put the binding back. */
-        int readFbo = 0;
-        if (gl_getIntegerv != NULL) gl_getIntegerv(0x8CAA /* GL_READ_FRAMEBUFFER_BINDING */, &readFbo);
-        if (gl_bindFramebuffer != NULL && readFbo != 0) {
-            gl_bindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, 0);
-        }
-        if (gl_readPixels != NULL && sw > 32 && sh > 32) {
-            /* A 3x3 grid of 8x8 probes across the whole drawable, brightest
-               channel per cell. One number per cell says both whether anything
-               was drawn and where, which the viewport-centre probe alone could
-               not: a scene drawn off to one side reads as black either way. */
-            char *out = sample;
-            out += snprintf(out, sizeof(sample), " grid");
-            for (int gy = 2; gy >= 0; gy--) {
-                out += snprintf(out, sizeof(sample) - (out - sample), " ");
-                for (int gx = 0; gx < 3; gx++) {
-                    unsigned char px[8 * 8 * 4];
-                    memset(px, 0, sizeof(px));
-                    gl_readPixels((sw - 8) * gx / 2, (sh - 8) * gy / 2, 8, 8,
-                                  0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, px);
-                    int maxc = 0;
-                    for (unsigned i = 0; i < 8 * 8 * 4; i++) {
-                        if ((i % 4) != 3 && px[i] > maxc) maxc = px[i];
-                    }
-                    out += snprintf(out, sizeof(sample) - (out - sample), "%d,", maxc);
-                }
-            }
-        } else {
-            snprintf(sample, sizeof(sample), " (no readback: getIntegerv=%p readPixels=%p)",
-                     (void *) gl_getIntegerv, (void *) gl_readPixels);
-        }
-        if (gl_bindFramebuffer != NULL && readFbo != 0) {
-            gl_bindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, (unsigned int) readFbo);
-        }
-        snprintf(sample + strlen(sample), sizeof(sample) - strlen(sample),
-                 " readfbo=%d glerr=0x%04x", readFbo,
-                 gl_getError != NULL ? gl_getError() : 0);
-    }
-
-    EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
-
-    if (describe) {
-        char msg[420];
-        snprintf(msg, sizeof(msg),
-                 "swap #%ld ok=%d err=0x%04x surface %dx%d window %dx%d viewport %d,%d %dx%d%s",
-                 swaps, (int) ok, egl.getError(), sw, sh,
-                 ANativeWindow_getWidth(ctx->window),
-                 ANativeWindow_getHeight(ctx->window),
-                 vp[0], vp[1], vp[2], vp[3], sample);
+        char msg[160];
+        snprintf(msg, sizeof(msg), "first frame swapped ok=%d, surface %dx%d, window %dx%d",
+                 (int) ok, sw, sh,
+                 ANativeWindow_getWidth(ctx->window), ANativeWindow_getHeight(ctx->window));
         rlawtNote(msg);
     }
-    swaps++;
 }
 
 /* The scene renders into the window's own buffer, so the default framebuffer is

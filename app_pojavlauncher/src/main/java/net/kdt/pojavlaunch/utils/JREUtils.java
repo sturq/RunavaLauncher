@@ -560,6 +560,7 @@ public class JREUtils {
     public static native boolean dlopen(String libPath);
     public static native void setLdLibraryPath(String ldLibraryPath);
     public static native void setupBridgeWindow(Object surface);
+    public static native void setBridgeWindowGeometry(int width, int height);
     public static native void releaseBridgeWindow();
     public static native void initializeHooks();
     public static native void setupExitMethod(Context context);

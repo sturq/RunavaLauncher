@@ -157,46 +157,11 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         int longerEdge = Math.max(dm.widthPixels, dm.heightPixels);
         int shorterEdge = Math.min(dm.widthPixels, dm.heightPixels);
         int minCanvasForRuneLite = 800 * longerEdge / Math.max(1, shorterEdge);
-        // In GPU mode take the longer edge whole, so the visible region comes out
-        // as exactly the screen in both orientations and the client draws in real
-        // pixels. Everything then shares one coordinate space: no scaling between
-        // AWT and GL, and the scene buffer can stay at the view's own size, which
-        // is the only size it renders at — shrinking a SurfaceTexture below its
-        // view produced 80 seconds of black frames with EGL still reporting
-        // success. The 60% cap stays for the software path, where the AWT blit
-        // rasterises every pixel on the CPU and is the thing that cap protects;
-        // with the GPU plugin the AWT layer only paints the window chrome.
-        // In GPU mode take the longer edge whole. The visible region then comes
-        // out as exactly the screen in both orientations, so the client draws in
-        // real pixels and the AWT and GL layers share one coordinate space with
-        // no scaling between them. The scene buffer has to stay at the view's
-        // own size for the driver to present at all — a SurfaceTexture shrunk
-        // below its view gave 80 seconds of black frames with eglSwapBuffers
-        // returning success and glReadPixels confirming an empty window — so
-        // this is the only place the two can be made to agree.
-        //
-        // That leaves OSRS drawing its 765x503 login screen into a 1008-wide
-        // region. Scaling it up is RuneLite's own job and it has a feature for
-        // exactly that, enabled alongside the GPU plugin.
-        //
-        // The 60% cap stays on the software path, where the AWT blit rasterises
-        // every pixel on the CPU and is what that cap protects.
-        int canvasDim = gpuModeEnabled()
-                ? longerEdge
-                : Math.max((longerEdge * 3) / 5, minCanvasForRuneLite);
-        // Debug override: a "gpu_canvas" file holding an integer picks the square
-        // directly. The one configuration that has ever put the login screen on
-        // screen had a much smaller canvas than the drawable, and finding where
-        // that boundary is costs one launch per value rather than one build.
-        try {
-            File dim = new File(getExternalFilesDir(null), "gpu_canvas");
-            if (dim.exists()) {
-                String txt = new java.util.Scanner(dim).useDelimiter("\\A").next().trim();
-                int v = Integer.parseInt(txt);
-                if (v >= 800 && v <= 8192) canvasDim = v;
-            }
-        } catch (Throwable ignored) {
-        }
+        // Both renderers share this. The software path is the reference for how
+        // the game should look, so GPU mode has no business drawing at a
+        // different size; the scene window is brought into this space instead,
+        // by sizeSceneWindow.
+        int canvasDim = Math.max((longerEdge * 3) / 5, minCanvasForRuneLite);
         Log.i("RuneLiteGame", "cacio canvas " + canvasDim + " for display "
                 + dm.widthPixels + "x" + dm.heightPixels);
         AWTCanvasView.setManagedScreenSize(canvasDim, canvasDim);
@@ -261,12 +226,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture available " + w + "x" + h);
                     JREUtils.setupBridgeWindow(new android.view.Surface(t));
+                    sizeSceneWindow(w, h);
                     mSceneSurfaceReady.countDown();
                 }
 
                 @Override
                 public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture resized to " + w + "x" + h);
+                    sizeSceneWindow(w, h);
                 }
 
                 @Override
@@ -556,6 +523,29 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     /** GPU mode is opt-in while it is being brought up, so a broken experiment
      *  cannot take the working software path with it. Toggled by creating or
      *  deleting "gpu" in the app's external files directory. */
+    /** Give the scene window the AWT canvas's dimensions rather than the view's.
+     *  RuneLite draws in AWT pixels, so a view-sized drawable leaves the scene in
+     *  a corner of it at the wrong scale, out of step with the software layer
+     *  composited on top. Sized this way both layers are in one coordinate space
+     *  and each TextureView scales its own by the same factor.
+     *
+     *  Goes through ANativeWindow_setBuffersGeometry, which is what
+     *  awt_bridge.c has always used for the software layer.
+     *  SurfaceTexture.setDefaultBufferSize looks equivalent and is not: it
+     *  presents nothing at all.
+     *
+     *  Same formula as AWTCanvasView.refreshSize, and deliberately not read from
+     *  its statics: those are filled by a posted layout pass that has not
+     *  necessarily run when the surface arrives. */
+    private static void sizeSceneWindow(int viewWidth, int viewHeight) {
+        if (viewWidth <= 0 || viewHeight <= 0) return;
+        int dim = AWTCanvasView.AWT_CANVAS_WIDTH;
+        boolean landscape = viewWidth >= viewHeight;
+        int w = landscape ? dim : Math.max(1, dim * viewWidth / viewHeight);
+        int h = landscape ? Math.max(1, dim * viewHeight / viewWidth) : dim;
+        JREUtils.setBridgeWindowGeometry(w, h);
+    }
+
     private boolean gpuModeEnabled() {
         return new File(getExternalFilesDir(null), "gpu").exists();
     }
