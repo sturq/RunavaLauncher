@@ -198,6 +198,8 @@ static void (*gl_readPixels)(int, int, int, int, unsigned int, unsigned int, voi
 static void (*gl_clearColor)(float, float, float, float) = NULL;
 static void (*gl_clear)(unsigned int) = NULL;
 static void (*gl_finish)(void) = NULL;
+static void (*gl_bindFramebuffer)(unsigned int, unsigned int) = NULL;
+static unsigned int (*gl_getError)(void) = NULL;
 
 /* Ask through the same path LWJGL will use and report what comes back, one step
    at a time. Nothing resolved here is called: a bad pointer that is not null
@@ -232,6 +234,8 @@ static void reportWhatLwjglWillSee(void) {
     gl_clearColor  = getProc("glClearColor");
     gl_clear       = getProc("glClear");
     gl_finish      = getProc("glFinish");
+    gl_bindFramebuffer = getProc("glBindFramebuffer");
+    gl_getError    = getProc("glGetError");
 }
 
 /* Paint the surface a colour nothing else would produce, read it back, and
@@ -474,7 +478,7 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
        sparse sampling was aliasing against whatever flips the surface between
        portrait and landscape and could not show the period. */
     int describe = swaps < 1800 ? (swaps % 60) == 0 : (swaps % 600) == 0;
-    char sample[96] = "";
+    char sample[160] = "";
     int vp[4] = {-1, -1, -1, -1};
     EGLint sw = -1, sh = -1;
     if (describe) {
@@ -483,6 +487,15 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
             egl.querySurface(ctx->dpy, ctx->surface, EGL_HEIGHT, &sh);
         }
         if (gl_getIntegerv != NULL) gl_getIntegerv(0x0BA2 /* GL_VIEWPORT */, vp);
+        /* glReadPixels reads whatever is bound as GL_READ_FRAMEBUFFER, and the
+           client leaves its own FBOs bound. Every "black" reading so far may
+           have been a look into one of those rather than into the window.
+           Point the read at the window and put the binding back. */
+        int readFbo = 0;
+        if (gl_getIntegerv != NULL) gl_getIntegerv(0x8CAA /* GL_READ_FRAMEBUFFER_BINDING */, &readFbo);
+        if (gl_bindFramebuffer != NULL && readFbo != 0) {
+            gl_bindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, 0);
+        }
         if (gl_readPixels != NULL && sw > 32 && sh > 32) {
             /* A 3x3 grid of 8x8 probes across the whole drawable, brightest
                channel per cell. One number per cell says both whether anything
@@ -508,12 +521,18 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
             snprintf(sample, sizeof(sample), " (no readback: getIntegerv=%p readPixels=%p)",
                      (void *) gl_getIntegerv, (void *) gl_readPixels);
         }
+        if (gl_bindFramebuffer != NULL && readFbo != 0) {
+            gl_bindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, (unsigned int) readFbo);
+        }
+        snprintf(sample + strlen(sample), sizeof(sample) - strlen(sample),
+                 " readfbo=%d glerr=0x%04x", readFbo,
+                 gl_getError != NULL ? gl_getError() : 0);
     }
 
     EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
 
     if (describe) {
-        char msg[320];
+        char msg[420];
         snprintf(msg, sizeof(msg),
                  "swap #%ld ok=%d err=0x%04x surface %dx%d window %dx%d viewport %d,%d %dx%d%s",
                  swaps, (int) ok, egl.getError(), sw, sh,
