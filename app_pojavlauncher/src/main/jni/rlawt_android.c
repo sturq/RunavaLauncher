@@ -445,25 +445,34 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     int describe = swaps < 1800 ? (swaps % 60) == 0 : (swaps % 600) == 0;
     char sample[96] = "";
     int vp[4] = {-1, -1, -1, -1};
+    EGLint sw = -1, sh = -1;
     if (describe) {
+        if (egl.querySurface != NULL) {
+            egl.querySurface(ctx->dpy, ctx->surface, EGL_WIDTH, &sw);
+            egl.querySurface(ctx->dpy, ctx->surface, EGL_HEIGHT, &sh);
+        }
         if (gl_getIntegerv != NULL) gl_getIntegerv(0x0BA2 /* GL_VIEWPORT */, vp);
-        if (gl_readPixels != NULL && vp[2] > 0 && vp[3] > 0) {
-            static unsigned char px[32 * 32 * 4];
-            int x = vp[0] + vp[2] / 2 - 16, y = vp[1] + vp[3] / 2 - 16;
-            if (x < 0) x = 0;
-            if (y < 0) y = 0;
-            memset(px, 0, sizeof(px));
-            gl_readPixels(x, y, 32, 32, 0x1908 /* GL_RGBA */,
-                          0x1401 /* GL_UNSIGNED_BYTE */, px);
-            int lit = 0, maxc = 0;
-            for (unsigned i = 0; i < 32 * 32; i++) {
-                int r = px[i * 4], g = px[i * 4 + 1], b = px[i * 4 + 2];
-                if (r | g | b) lit++;
-                if (r > maxc) maxc = r;
-                if (g > maxc) maxc = g;
-                if (b > maxc) maxc = b;
+        if (gl_readPixels != NULL && sw > 32 && sh > 32) {
+            /* A 3x3 grid of 8x8 probes across the whole drawable, brightest
+               channel per cell. One number per cell says both whether anything
+               was drawn and where, which the viewport-centre probe alone could
+               not: a scene drawn off to one side reads as black either way. */
+            char *out = sample;
+            out += snprintf(out, sizeof(sample), " grid");
+            for (int gy = 2; gy >= 0; gy--) {
+                out += snprintf(out, sizeof(sample) - (out - sample), " ");
+                for (int gx = 0; gx < 3; gx++) {
+                    unsigned char px[8 * 8 * 4];
+                    memset(px, 0, sizeof(px));
+                    gl_readPixels((sw - 8) * gx / 2, (sh - 8) * gy / 2, 8, 8,
+                                  0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, px);
+                    int maxc = 0;
+                    for (unsigned i = 0; i < 8 * 8 * 4; i++) {
+                        if ((i % 4) != 3 && px[i] > maxc) maxc = px[i];
+                    }
+                    out += snprintf(out, sizeof(sample) - (out - sample), "%d,", maxc);
+                }
             }
-            snprintf(sample, sizeof(sample), " centre %d/1024 lit, brightest %d", lit, maxc);
         } else {
             snprintf(sample, sizeof(sample), " (no readback: getIntegerv=%p readPixels=%p)",
                      (void *) gl_getIntegerv, (void *) gl_readPixels);
@@ -473,11 +482,6 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
 
     if (describe) {
-        EGLint sw = -1, sh = -1;
-        if (egl.querySurface != NULL) {
-            egl.querySurface(ctx->dpy, ctx->surface, EGL_WIDTH, &sw);
-            egl.querySurface(ctx->dpy, ctx->surface, EGL_HEIGHT, &sh);
-        }
         char msg[320];
         snprintf(msg, sizeof(msg),
                  "swap #%ld ok=%d err=0x%04x surface %dx%d window %dx%d viewport %d,%d %dx%d%s",

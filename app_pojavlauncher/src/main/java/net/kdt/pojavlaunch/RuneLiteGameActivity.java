@@ -141,7 +141,19 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         //     RuneLite's ~800px minimum window width (otherwise RuneLite
         //     pack()s back larger and the agent's resize loop fights it,
         //     leaving the UI clipped — that's what looked "stretched")
-        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        //
+        // Measure the real display, not getResources().getDisplayMetrics().
+        // That one reports the app window with the status and navigation bars
+        // already subtracted (1008x2070 on a 1008x2244 screen), while the view
+        // this canvas is scaled into runs immersive and gets the whole 2244.
+        // Deriving the square from the shorter aspect ratio quietly broke the
+        // guarantee above: it yielded 737 visible pixels where RuneLite will
+        // not go below 767, so RuneLite kept pack()ing back and the agent kept
+        // resizing it down, forever. In GPU mode the same 30px overshoot put
+        // the client's viewport outside the drawable and the scene never
+        // appeared at all.
+        android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(dm);
         int longerEdge = Math.max(dm.widthPixels, dm.heightPixels);
         int shorterEdge = Math.min(dm.widthPixels, dm.heightPixels);
         int minCanvasForRuneLite = 800 * longerEdge / Math.max(1, shorterEdge);
