@@ -96,28 +96,6 @@ JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_setupBridgeWindow
 }
 
 
-/* Pin the scene window's buffers to the AWT canvas's dimensions rather than the
-   view's, so the GL layer lands in the same coordinate space as the software
-   layer and the TextureView scales both by the same factor.
-
-   This is the mechanism awt_bridge.c has always used for the AWT layer. The
-   other one, SurfaceTexture.setDefaultBufferSize, was tried first and presents
-   nothing: eighty seconds of black frames with eglSwapBuffers returning success
-   and a readback of the window coming back empty.
-
-   Android resets the geometry when the view is resized, so this is re-applied
-   on every rotation, not only at startup. */
-JNIEXPORT void JNICALL
-Java_net_kdt_pojavlaunch_utils_JREUtils_setBridgeWindowGeometry(ABI_COMPAT JNIEnv *env,
-                                                                ABI_COMPAT jclass clazz,
-                                                                jint width, jint height) {
-    if (pojav_environ == NULL || pojav_environ->pojavWindow == NULL) return;
-    if (width <= 0 || height <= 0) return;
-    ANativeWindow_setBuffersGeometry(pojav_environ->pojavWindow, width, height,
-                                     WINDOW_FORMAT_RGBA_8888);
-}
-
-
 JNIEXPORT void JNICALL
 Java_net_kdt_pojavlaunch_utils_JREUtils_releaseBridgeWindow(ABI_COMPAT JNIEnv *env, ABI_COMPAT jclass clazz) {
     // Guarded and cleared: calling this twice, or after the window is already

@@ -226,14 +226,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture available " + w + "x" + h);
                     JREUtils.setupBridgeWindow(new android.view.Surface(t));
-                    sizeSceneWindow(w, h);
+                    alignSceneToCanvas(w, h);
                     mSceneSurfaceReady.countDown();
                 }
 
                 @Override
                 public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture resized to " + w + "x" + h);
-                    sizeSceneWindow(w, h);
+                    alignSceneToCanvas(w, h);
                 }
 
                 @Override
@@ -523,27 +523,45 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     /** GPU mode is opt-in while it is being brought up, so a broken experiment
      *  cannot take the working software path with it. Toggled by creating or
      *  deleting "gpu" in the app's external files directory. */
-    /** Give the scene window the AWT canvas's dimensions rather than the view's.
-     *  RuneLite draws in AWT pixels, so a view-sized drawable leaves the scene in
-     *  a corner of it at the wrong scale, out of step with the software layer
-     *  composited on top. Sized this way both layers are in one coordinate space
-     *  and each TextureView scales its own by the same factor.
+    /** Line the scene layer up with the software layer composited on top of it.
      *
-     *  Goes through ANativeWindow_setBuffersGeometry, which is what
-     *  awt_bridge.c has always used for the software layer.
-     *  SurfaceTexture.setDefaultBufferSize looks equivalent and is not: it
-     *  presents nothing at all.
+     *  RuneLite draws in AWT pixels, so the scene occupies only an
+     *  AWT-canvas-sized corner of a view-sized drawable. Shrinking the drawable
+     *  to match is the obvious fix and does not work: this is the kopper build
+     *  of zink, and it presents nothing at all when the drawable is smaller than
+     *  its window. Both ways of asking were tried and both go black with
+     *  eglSwapBuffers still returning success —
+     *  SurfaceTexture.setDefaultBufferSize, and ANativeWindow_setBuffersGeometry,
+     *  which is the call awt_bridge.c uses successfully for the software layer.
+     *  That one even took effect, logging a 1780x799 surface on a 2244x1008
+     *  window, and still showed nothing. The software layer gets away with it
+     *  because it writes through lock/unlockAndPost and never touches EGL.
      *
-     *  Same formula as AWTCanvasView.refreshSize, and deliberately not read from
-     *  its statics: those are filled by a posted layout pass that has not
-     *  necessarily run when the surface arrives. */
-    private static void sizeSceneWindow(int viewWidth, int viewHeight) {
+     *  So the drawable stays at the view's size and the scaling happens here,
+     *  where it costs nothing: the composite transform maps the corner the
+     *  scene lands in onto the whole view, which is the same mapping
+     *  AWTCanvasView gets for free by having a smaller buffer.
+     *
+     *  Same visible-region formula as AWTCanvasView.refreshSize, and
+     *  deliberately not read from its statics: those are filled by a posted
+     *  layout pass that has not necessarily run when the surface arrives. */
+    private void alignSceneToCanvas(int viewWidth, int viewHeight) {
         if (viewWidth <= 0 || viewHeight <= 0) return;
         int dim = AWTCanvasView.AWT_CANVAS_WIDTH;
         boolean landscape = viewWidth >= viewHeight;
-        int w = landscape ? dim : Math.max(1, dim * viewWidth / viewHeight);
-        int h = landscape ? Math.max(1, dim * viewHeight / viewWidth) : dim;
-        JREUtils.setBridgeWindowGeometry(w, h);
+        int visibleW = landscape ? dim : Math.max(1, dim * viewWidth / viewHeight);
+        int visibleH = landscape ? Math.max(1, dim * viewHeight / viewWidth) : dim;
+
+        // GL's origin is the bottom left, so the scene sits in the drawable's
+        // bottom-left corner: rows viewHeight-visibleH..viewHeight once the
+        // texture is the right way up. Lift that corner to the top and scale it
+        // out to fill.
+        android.graphics.Matrix m = new android.graphics.Matrix();
+        m.setScale((float) viewWidth / visibleW, (float) viewHeight / visibleH);
+        m.preTranslate(0f, -(viewHeight - visibleH));
+        mGlSurface.setTransform(m);
+        gpuLog("scene aligned: " + visibleW + "x" + visibleH + " of "
+                + viewWidth + "x" + viewHeight);
     }
 
     private boolean gpuModeEnabled() {
