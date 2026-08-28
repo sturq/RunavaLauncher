@@ -207,12 +207,16 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture available " + w + "x" + h);
+                    sizeSceneBuffer(t, w, h);
                     JREUtils.setupBridgeWindow(new android.view.Surface(t));
                     mSceneSurfaceReady.countDown();
                 }
 
                 @Override
-                public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) { }
+                public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
+                    gpuLog("scene texture resized to " + w + "x" + h);
+                    sizeSceneBuffer(t, w, h);
+                }
 
                 @Override
                 public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture t) {
@@ -501,6 +505,24 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     /** GPU mode is opt-in while it is being brought up, so a broken experiment
      *  cannot take the working software path with it. Toggled by creating or
      *  deleting "gpu" in the app's external files directory. */
+    /** Give the scene buffer the same dimensions the AWT canvas uses, not the
+     *  screen's. RuneLite draws in AWT pixels, so a screen-sized buffer leaves
+     *  the scene in the bottom-left corner at ~76% scale with the rest black.
+     *  Sized this way both layers are in one coordinate space and the
+     *  TextureView scales the result up to the screen, exactly as
+     *  AWTCanvasView already does for the software path.
+     *
+     *  Same formula as AWTCanvasView.refreshSize, and deliberately not read
+     *  from its statics: those are filled by a posted layout pass that has not
+     *  necessarily run when the surface arrives. */
+    private static void sizeSceneBuffer(android.graphics.SurfaceTexture t, int w, int h) {
+        if (w <= 0 || h <= 0) return;
+        int dim = AWTCanvasView.AWT_CANVAS_WIDTH;
+        int bw = w >= h ? dim : Math.max(1, dim * w / h);
+        int bh = w >= h ? Math.max(1, dim * h / w) : dim;
+        t.setDefaultBufferSize(bw, bh);
+    }
+
     private boolean gpuModeEnabled() {
         return new File(getExternalFilesDir(null), "gpu").exists();
     }

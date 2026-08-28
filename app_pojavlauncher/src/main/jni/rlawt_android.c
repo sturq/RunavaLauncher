@@ -439,7 +439,10 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
        without filling the log. The readback has to happen before the swap,
        because after it the back buffer is undefined. */
     static long swaps = 0;
-    int describe = (swaps % 600) == 0;
+    /* Once a second for the first half minute, then once every ten seconds. The
+       sparse sampling was aliasing against whatever flips the surface between
+       portrait and landscape and could not show the period. */
+    int describe = swaps < 1800 ? (swaps % 60) == 0 : (swaps % 600) == 0;
     char sample[96] = "";
     int vp[4] = {-1, -1, -1, -1};
     if (describe) {
