@@ -157,11 +157,24 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         int longerEdge = Math.max(dm.widthPixels, dm.heightPixels);
         int shorterEdge = Math.min(dm.widthPixels, dm.heightPixels);
         int minCanvasForRuneLite = 800 * longerEdge / Math.max(1, shorterEdge);
-        // Both renderers share this. The software path is the reference for how
-        // the game should look, so GPU mode has no business drawing at a
-        // different size; the scene window is brought into this space instead,
-        // by sizeSceneWindow.
-        int canvasDim = Math.max((longerEdge * 3) / 5, minCanvasForRuneLite);
+        // GPU mode takes the longer edge whole, so the visible region is exactly
+        // the screen and the client draws in real device pixels.
+        //
+        // This is not a preference, it is what RuneLite's GPU plugin requires.
+        // Its final blit is sized canvas x GraphicsConfiguration.getDefaultTransform(),
+        // the HiDPI factor, and Caciocavallo's configuration is fixed at 1:1 —
+        // it reads cacio.managed.screensize and nothing else. So the client
+        // blits exactly canvas-many pixels into the drawable, and any canvas
+        // smaller than the drawable leaves the scene in a corner with the rest
+        // black. Scaling it back up afterwards was tried and is the wrong shape
+        // of fix: at 1:1 the client is already rendering at full resolution,
+        // which is sharper than the software path's upscale, not blurrier.
+        //
+        // The 60% cap stays on the software path, where the AWT blit rasterises
+        // every pixel on the CPU and is what that cap protects.
+        int canvasDim = gpuModeEnabled()
+                ? longerEdge
+                : Math.max((longerEdge * 3) / 5, minCanvasForRuneLite);
         Log.i("RuneLiteGame", "cacio canvas " + canvasDim + " for display "
                 + dm.widthPixels + "x" + dm.heightPixels);
         AWTCanvasView.setManagedScreenSize(canvasDim, canvasDim);
@@ -226,14 +239,12 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture available " + w + "x" + h);
                     JREUtils.setupBridgeWindow(new android.view.Surface(t));
-                    alignSceneToCanvas(w, h);
                     mSceneSurfaceReady.countDown();
                 }
 
                 @Override
                 public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture resized to " + w + "x" + h);
-                    alignSceneToCanvas(w, h);
                 }
 
                 @Override
@@ -523,52 +534,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     /** GPU mode is opt-in while it is being brought up, so a broken experiment
      *  cannot take the working software path with it. Toggled by creating or
      *  deleting "gpu" in the app's external files directory. */
-    /** Line the scene layer up with the software layer composited on top of it.
-     *
-     *  RuneLite draws in AWT pixels, so the scene occupies only an
-     *  AWT-canvas-sized corner of a view-sized drawable. Shrinking the drawable
-     *  to match is the obvious fix and does not work: this is the kopper build
-     *  of zink, and it presents nothing at all when the drawable is smaller than
-     *  its window. Both ways of asking were tried and both go black with
-     *  eglSwapBuffers still returning success —
-     *  SurfaceTexture.setDefaultBufferSize, and ANativeWindow_setBuffersGeometry,
-     *  which is the call awt_bridge.c uses successfully for the software layer.
-     *  That one even took effect, logging a 1780x799 surface on a 2244x1008
-     *  window, and still showed nothing. The software layer gets away with it
-     *  because it writes through lock/unlockAndPost and never touches EGL.
-     *
-     *  So the drawable stays at the view's size and the scaling happens here,
-     *  where it costs nothing: the composite transform maps the corner the
-     *  scene lands in onto the whole view, which is the same mapping
-     *  AWTCanvasView gets for free by having a smaller buffer.
-     *
-     *  Same visible-region formula as AWTCanvasView.refreshSize, and
-     *  deliberately not read from its statics: those are filled by a posted
-     *  layout pass that has not necessarily run when the surface arrives. */
-    private void alignSceneToCanvas(int viewWidth, int viewHeight) {
-        if (viewWidth <= 0 || viewHeight <= 0) return;
-        int dim = AWTCanvasView.AWT_CANVAS_WIDTH;
-        boolean landscape = viewWidth >= viewHeight;
-        int visibleW = landscape ? dim : Math.max(1, dim * viewWidth / viewHeight);
-        int visibleH = landscape ? Math.max(1, dim * viewHeight / viewWidth) : dim;
-
-        // The scene lands in the drawable's *top* left corner, not the bottom
-        // left that GL's own origin would suggest — measured off a frame where
-        // the client was visible, whose content began at y=7 of 2244 rather
-        // than at the 84 a bottom anchor would have put it. Assuming otherwise
-        // and translating by the difference pushed the whole scene off the top
-        // edge, which looks exactly like the renderer failing.
-        //
-        // So it is a plain scale about the origin. Both factors come out the
-        // same, because the visible region is derived from the view's own
-        // aspect: nothing is stretched.
-        android.graphics.Matrix m = new android.graphics.Matrix();
-        m.setScale((float) viewWidth / visibleW, (float) viewHeight / visibleH);
-        mGlSurface.setTransform(m);
-        gpuLog("scene aligned: " + visibleW + "x" + visibleH + " of "
-                + viewWidth + "x" + viewHeight);
-    }
-
     private boolean gpuModeEnabled() {
         return new File(getExternalFilesDir(null), "gpu").exists();
     }
