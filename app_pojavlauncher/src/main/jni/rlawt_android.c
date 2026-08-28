@@ -175,12 +175,12 @@ static int loadEgl(JNIEnv *env) {
         rlawtThrow(env, "rlawt: libEGL_mesa.so is missing EGL entry points");
         return 0;
     }
-    /* Load the shim ourselves, after Mesa's EGL is global. LWJGL resolves every
-       GL entry point through its glXGetProcAddress, and the shim is linked
-       against no EGL at all: it picks eglGetProcAddress out of the global
-       namespace. Android's own libEGL is always there, so if the shim is loaded
-       first it can bind to the system GLES driver instead of Mesa, which knows
-       nothing of our context and answers null for everything. */
+    /* The shim links against no EGL and dlopens whichever library POJAVEXEC_EGL
+       names, exactly as ctxbridges/egl_loader.c does. Only JREUtils sets that,
+       and only on the Minecraft zink path we do not take, so in GPU mode it is
+       unset: the shim finds no EGL, its eglGetProcAddress stays null, and the
+       first GL lookup LWJGL makes is a jump to address zero. */
+    setenv("POJAVEXEC_EGL", "libEGL_mesa.so", 1);
     openLib("libglxshim.so", RTLD_GLOBAL | RTLD_NOW);
 
     egl.loaded = 1;
