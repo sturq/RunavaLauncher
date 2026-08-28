@@ -195,6 +195,9 @@ static int loadEgl(JNIEnv *env) {
    shim LWJGL uses, so a null here means LWJGL sees null too. */
 static void (*gl_getIntegerv)(unsigned int, int *) = NULL;
 static void (*gl_readPixels)(int, int, int, int, unsigned int, unsigned int, void *) = NULL;
+static void (*gl_clearColor)(float, float, float, float) = NULL;
+static void (*gl_clear)(unsigned int) = NULL;
+static void (*gl_finish)(void) = NULL;
 
 /* Ask through the same path LWJGL will use and report what comes back, one step
    at a time. Nothing resolved here is called: a bad pointer that is not null
@@ -226,6 +229,32 @@ static void reportWhatLwjglWillSee(void) {
 
     gl_getIntegerv = getProc("glGetIntegerv");
     gl_readPixels  = getProc("glReadPixels");
+    gl_clearColor  = getProc("glClearColor");
+    gl_clear       = getProc("glClear");
+    gl_finish      = getProc("glFinish");
+}
+
+/* Paint the surface a colour nothing else would produce, read it back, and
+   leave it on screen for one frame. This is the one thing all the black-frame
+   measurements could not distinguish: whether our context reaches the window at
+   all, or whether it reaches it fine and the client is drawing black. */
+static void proveTheSurfaceTakesPaint(AndroidAWTContext *ctx) {
+    if (gl_clearColor == NULL || gl_clear == NULL || gl_readPixels == NULL) {
+        rlawtNote("cannot probe the surface, GL entry points did not resolve");
+        return;
+    }
+    gl_clearColor(1.0f, 0.0f, 1.0f, 1.0f);
+    gl_clear(0x00004000 /* GL_COLOR_BUFFER_BIT */);
+    if (gl_finish != NULL) gl_finish();
+
+    unsigned char px[4] = {0, 0, 0, 0};
+    gl_readPixels(4, 4, 1, 1, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, px);
+    char msg[128];
+    snprintf(msg, sizeof(msg), "magenta probe reads back %d,%d,%d,%d (want 255,0,255)",
+             px[0], px[1], px[2], px[3]);
+    rlawtNote(msg);
+
+    egl.swapBuffers(ctx->dpy, ctx->surface);
 }
 
 /*
@@ -402,6 +431,7 @@ Java_net_runelite_rlawt_AWTContext_createGLContext(JNIEnv *env, jobject self) {
     LOGI("GL context up and current, EGL %d.%d", major, minor);
     rlawtNote("GL context up and current");
     reportWhatLwjglWillSee();
+    proveTheSurfaceTakesPaint(ctx);
 }
 
 JNIEXPORT jint JNICALL
