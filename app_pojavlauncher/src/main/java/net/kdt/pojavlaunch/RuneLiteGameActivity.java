@@ -169,6 +169,21 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         int canvasDim = gpuModeEnabled()
                 ? longerEdge
                 : Math.max((longerEdge * 3) / 5, minCanvasForRuneLite);
+        // Debug override: a "gpu_canvas" file holding an integer picks the square
+        // directly. The one configuration that has ever put the login screen on
+        // screen had a much smaller canvas than the drawable, and finding where
+        // that boundary is costs one launch per value rather than one build.
+        try {
+            File dim = new File(getExternalFilesDir(null), "gpu_canvas");
+            if (dim.exists()) {
+                String txt = new java.util.Scanner(dim).useDelimiter("\\A").next().trim();
+                int v = Integer.parseInt(txt);
+                if (v >= 800 && v <= 8192) canvasDim = v;
+            }
+        } catch (Throwable ignored) {
+        }
+        Log.i("RuneLiteGame", "cacio canvas " + canvasDim + " for display "
+                + dm.widthPixels + "x" + dm.heightPixels);
         AWTCanvasView.setManagedScreenSize(canvasDim, canvasDim);
         // Single source of truth: AWTCanvasView.refreshSize() computes the
         // visible region from the parent view's measured pixels and fires
