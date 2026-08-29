@@ -27,6 +27,7 @@ static struct {
     unsigned long skipped;
     unsigned long long fetchNanos;   /* asking Cacio for the frame */
     unsigned long long lockNanos;    /* waiting for a surface buffer */
+    unsigned long long pinNanos;     /* getting at the array's memory */
     unsigned long long copyNanos;    /* the pixel loop itself */
     unsigned long long lastReportNanos;
 } blitStats;
@@ -199,6 +200,7 @@ JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreen
 
     jboolean posted = JNI_FALSE;
     jint *src = (*runtimeJNIEnvPtr_GRAPHICS)->GetPrimitiveArrayCritical(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, NULL);
+    unsigned long long tPinned = monotonicNanos();
     if (src != NULL) {
         int w = buf.width  < visibleWidth  ? buf.width  : visibleWidth;
         int h = buf.height < visibleHeight ? buf.height : visibleHeight;
@@ -277,24 +279,27 @@ JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreen
     blitStats.posted++;
     blitStats.fetchNanos += tFetched - t0;
     blitStats.lockNanos  += tLocked - tFetched;
-    blitStats.copyNanos  += tCopied - tLocked;
+    blitStats.pinNanos   += tPinned - tLocked;
+    blitStats.copyNanos  += tCopied - tPinned;
     if (blitStats.lastReportNanos == 0) blitStats.lastReportNanos = now;
     unsigned long long window = now - blitStats.lastReportNanos;
     if (window >= 5000000000ULL) {
         unsigned long p = blitStats.posted ? blitStats.posted : 1;
         __android_log_print(ANDROID_LOG_INFO, "awtblit",
                 "%dx%d: %lu posted, %lu skipped in %llums — fetch %llu us, "
-                "lock %llu us, copy %llu us, %llu posted/s",
+                "lock %llu us, pin %llu us, copy %llu us, %llu posted/s",
                 visibleWidth, visibleHeight, blitStats.posted, blitStats.skipped,
                 window / 1000000ULL,
                 blitStats.fetchNanos / (p * 1000ULL),
                 blitStats.lockNanos / (p * 1000ULL),
+                blitStats.pinNanos / (p * 1000ULL),
                 blitStats.copyNanos / (p * 1000ULL),
                 blitStats.posted * 1000000000ULL / window);
         blitStats.posted = 0;
         blitStats.skipped = 0;
         blitStats.fetchNanos = 0;
         blitStats.lockNanos = 0;
+        blitStats.pinNanos = 0;
         blitStats.copyNanos = 0;
         blitStats.lastReportNanos = now;
     }
