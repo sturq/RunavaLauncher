@@ -229,6 +229,17 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture resized to " + w + "x" + h);
+                    // The client draws correctly into a correctly sized surface
+                    // after a rotation — rlawt reports window and surface both
+                    // turned, and its readback of the window comes back lit.
+                    // What is wrong is the display: the scene appears squeezed
+                    // to 44% of the width, and 1008/2244 is 0.449, so the buffer
+                    // being composited still carries the old orientation.
+                    //
+                    // AWTCanvasView has always set this on its own layer for the
+                    // same reason. This is the view's own size, not the shrink
+                    // that kopper will not present.
+                    t.setDefaultBufferSize(w, h);
                 }
 
                 @Override
