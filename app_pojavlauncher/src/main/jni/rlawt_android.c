@@ -162,6 +162,15 @@ static int loadEgl(JNIEnv *env) {
         char ptr[64];
         snprintf(ptr, sizeof(ptr), "%" PRIxPTR, (uintptr_t) vulkan);
         setenv("VULKAN_PTR", ptr, 1);
+
+        /* This Mesa is patched to take the loader as a handle and pull
+           vkGetInstanceProcAddr off it. If that symbol is missing the failure
+           surfaces much later and much less clearly, as zink not creating a
+           screen at all, which is what the emulator does. */
+        char msg[128];
+        snprintf(msg, sizeof(msg), "libvulkan handle %p, vkGetInstanceProcAddr %p",
+                 vulkan, dlsym(vulkan, "vkGetInstanceProcAddr"));
+        rlawtNote(msg);
     }
 
     void *h = openLib("libEGL_mesa.so", RTLD_GLOBAL | RTLD_NOW);
