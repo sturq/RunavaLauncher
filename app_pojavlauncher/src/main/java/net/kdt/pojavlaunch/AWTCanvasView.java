@@ -46,19 +46,44 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     private int mHoleX, mHoleY, mHoleW, mHoleH;
     private long mHoleReadAtMs;
     private java.io.File mHoleFile;
+    private volatile boolean mHoleDirty;
+    private android.os.FileObserver mHoleWatcher;
+
+    /** Rotation moves the game canvas, and until the new rectangle is known the
+     *  scene is drawn in the old place and the transparent hole is cut in the
+     *  old place — which is the black flash and the stretched frame. The JVM
+     *  side writes the new rectangle as soon as its layout settles, so wait for
+     *  that write rather than for the next poll. */
+    @SuppressWarnings("deprecation")
+    private void watchGameCanvasFile() {
+        if (mHoleWatcher != null || mHoleFile == null) return;
+        try {
+            mHoleWatcher = new android.os.FileObserver(mHoleFile.getAbsolutePath(),
+                    android.os.FileObserver.MODIFY | android.os.FileObserver.CLOSE_WRITE) {
+                @Override public void onEvent(int event, String path) { mHoleDirty = true; }
+            };
+            mHoleWatcher.startWatching();
+        } catch (Throwable ignored) {
+            // Without it the poll still catches up, just half a second later.
+        }
+    }
 
     /** The game canvas's position on the Cacio screen, as the JVM-side agent
      *  last reported it. Polled rather than pushed: it changes only on layout,
      *  and the render thread is the only reader. */
     private void refreshGameCanvasHole() {
         long now = android.os.SystemClock.uptimeMillis();
-        if (now - mHoleReadAtMs < 500) return;
+        // Polled slowly as a backstop; the FileObserver below is what makes a
+        // rotation look instant rather than half a second of stale rectangle.
+        if (!mHoleDirty && now - mHoleReadAtMs < 500) return;
+        mHoleDirty = false;
         mHoleReadAtMs = now;
         try {
             if (mHoleFile == null) {
                 java.io.File home = getContext().getExternalFilesDir(null);
                 if (home == null) return;
                 mHoleFile = new java.io.File(home, ".runelitedroid_canvas");
+                watchGameCanvasFile();
             }
             if (!mHoleFile.exists()) return;
             String[] parts;

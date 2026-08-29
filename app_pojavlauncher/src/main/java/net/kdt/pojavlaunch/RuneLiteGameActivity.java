@@ -558,6 +558,16 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         int visibleH = SceneGeometry.visibleHeight(square, mSceneViewW, mSceneViewH);
         float scale = (float) mSceneViewW / visibleW;
 
+        // A rotation changes the view immediately and the canvas a moment
+        // later, so for that moment the rectangle still describes the other
+        // orientation. Recomputing from it produces the stretched frame; keep
+        // showing the previous one until the two agree again.
+        if (mCanvasX + mCanvasW > visibleW || mCanvasY + mCanvasH > visibleH) {
+            gpuLog("canvas " + mCanvasW + "x" + mCanvasH + " at " + mCanvasX + "," + mCanvasY
+                    + " does not fit " + visibleW + "x" + visibleH + " yet, keeping the last placement");
+            return;
+        }
+
         android.graphics.Matrix m = new android.graphics.Matrix();
         m.setScale(scale, scale);
         // OpenGL renders the canvas at its drawable's own origin, which is the
