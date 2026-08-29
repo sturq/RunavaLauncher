@@ -89,6 +89,7 @@ typedef struct {
     int multisamples;
     int insetX, insetY;
     int builtForWidth, builtForHeight;
+    int failedForWidth, failedForHeight;
 } AndroidAWTContext;
 
 /* logcat overflows during a client startup, so anything worth reading also goes
@@ -463,32 +464,52 @@ static void rebuildSurfaceIfWindowResized(AndroidAWTContext *ctx) {
     int width = ANativeWindow_getWidth(ctx->window);
     int height = ANativeWindow_getHeight(ctx->window);
     if (width <= 0 || height <= 0) return;
-    if (width == ctx->builtForWidth && height == ctx->builtForHeight) return;
+    if (ctx->surface != EGL_NO_SURFACE
+            && width == ctx->builtForWidth && height == ctx->builtForHeight) {
+        return;
+    }
 
-    /* One attempt per window size: if the driver hands back a surface that
-       still disagrees, retrying would rebuild sixty times a second. */
     int wasWidth = ctx->builtForWidth, wasHeight = ctx->builtForHeight;
-    ctx->builtForWidth = width;
-    ctx->builtForHeight = height;
-
     egl.makeCurrent(ctx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-    egl.destroySurface(ctx->dpy, ctx->surface);
-    ctx->surface = egl.createWindowSurface(ctx->dpy, ctx->config,
-                                           (EGLNativeWindowType) ctx->window, NULL);
+    if (ctx->surface != EGL_NO_SURFACE) {
+        egl.destroySurface(ctx->dpy, ctx->surface);
+        ctx->surface = EGL_NO_SURFACE;
+    }
+    EGLSurface fresh = egl.createWindowSurface(ctx->dpy, ctx->config,
+                                               (EGLNativeWindowType) ctx->window, NULL);
 
     char msg[160];
-    if (ctx->surface == EGL_NO_SURFACE) {
-        snprintf(msg, sizeof(msg), "surface rebuild for %dx%d failed: 0x%04x",
-                 width, height, egl.getError());
-        rlawtNote(msg);
+    /* Record the size only once the surface is actually up. Marking it first
+       and returning on failure left the context with no surface at all, and
+       swapBuffers gives up on exactly that — so no frame was ever drawn again,
+       while the recorded size stopped any retry. That is the rotation that
+       goes black and stays black until you turn the device the other way. */
+    if (fresh == EGL_NO_SURFACE) {
+        if (ctx->failedForWidth != width || ctx->failedForHeight != height) {
+            ctx->failedForWidth = width;
+            ctx->failedForHeight = height;
+            snprintf(msg, sizeof(msg), "surface rebuild for %dx%d failed: 0x%04x, will retry",
+                     width, height, egl.getError());
+            rlawtNote(msg);
+        }
         return;
     }
-    if (!egl.makeCurrent(ctx->dpy, ctx->surface, ctx->surface, ctx->context)) {
-        snprintf(msg, sizeof(msg), "rebuilt surface would not go current: 0x%04x",
-                 egl.getError());
-        rlawtNote(msg);
+    if (!egl.makeCurrent(ctx->dpy, fresh, fresh, ctx->context)) {
+        egl.destroySurface(ctx->dpy, fresh);
+        if (ctx->failedForWidth != width || ctx->failedForHeight != height) {
+            ctx->failedForWidth = width;
+            ctx->failedForHeight = height;
+            snprintf(msg, sizeof(msg), "rebuilt %dx%d would not go current: 0x%04x, will retry",
+                     width, height, egl.getError());
+            rlawtNote(msg);
+        }
         return;
     }
+
+    ctx->surface = fresh;
+    ctx->builtForWidth = width;
+    ctx->builtForHeight = height;
+    ctx->failedForWidth = ctx->failedForHeight = 0;
     snprintf(msg, sizeof(msg), "surface rebuilt %dx%d -> %dx%d after a window resize",
              wasWidth, wasHeight, width, height);
     rlawtNote(msg);
@@ -497,8 +518,11 @@ static void rebuildSurfaceIfWindowResized(AndroidAWTContext *ctx) {
 JNIEXPORT void JNICALL
 Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     AndroidAWTContext *ctx = ctxOf(env, self);
-    if (ctx == NULL || ctx->dpy == NULL || ctx->surface == NULL) return;
+    if (ctx == NULL || ctx->dpy == NULL) return;
+    /* Before the surface check, not after: a failed rebuild leaves no surface,
+       and bailing out here is what made that state permanent. */
     rebuildSurfaceIfWindowResized(ctx);
+    if (ctx->surface == EGL_NO_SURFACE) return;
     EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
 
     /* Once, on the first frame. "The context came up" and "frames actually
