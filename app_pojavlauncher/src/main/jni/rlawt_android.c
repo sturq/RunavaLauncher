@@ -90,6 +90,7 @@ typedef struct {
     int insetX, insetY;
     int builtForWidth, builtForHeight;
     int failedForWidth, failedForHeight;
+    char lastState[192];
 } AndroidAWTContext;
 
 /* logcat overflows during a client startup, so anything worth reading also goes
@@ -213,6 +214,12 @@ static int loadEgl(JNIEnv *env) {
 }
 
 
+/* Enough GL to describe a frame from inside the swap. Resolved through the
+   same shim LWJGL uses, so a null here means LWJGL sees null too. */
+static void (*gl_getIntegerv)(unsigned int, int *) = NULL;
+static void (*gl_readPixels)(int, int, int, int, unsigned int, unsigned int, void *) = NULL;
+static void (*gl_bindFramebuffer)(unsigned int, unsigned int) = NULL;
+
 /* Ask through the same path LWJGL will use and report what comes back, one step
    at a time. Nothing resolved here is called: a bad pointer that is not null
    takes the process down, which is exactly what LWJGL then does to itself. */
@@ -241,6 +248,9 @@ static void reportWhatLwjglWillSee(void) {
         rlawtNote(msg);
     }
 
+    gl_getIntegerv     = getProc("glGetIntegerv");
+    gl_readPixels      = getProc("glReadPixels");
+    gl_bindFramebuffer = getProc("glBindFramebuffer");
 }
 
 /*
@@ -523,26 +533,56 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
        and bailing out here is what made that state permanent. */
     rebuildSurfaceIfWindowResized(ctx);
     if (ctx->surface == EGL_NO_SURFACE) return;
+
+    /* Everything that decides whether a frame reaches the screen, measured in
+       the one place that can see all of it. Eight rounds of rotation fixes were
+       argued from inference about these numbers rather than the numbers, and
+       at least one conclusion drawn that way was simply wrong. Logged when it
+       changes, so a rotation prints a line and a steady state prints nothing. */
+    int windowW = ANativeWindow_getWidth(ctx->window);
+    int windowH = ANativeWindow_getHeight(ctx->window);
+    EGLint surfaceW = -1, surfaceH = -1;
+    if (egl.querySurface != NULL) {
+        egl.querySurface(ctx->dpy, ctx->surface, EGL_WIDTH, &surfaceW);
+        egl.querySurface(ctx->dpy, ctx->surface, EGL_HEIGHT, &surfaceH);
+    }
+    int viewport[4] = {-1, -1, -1, -1};
+    int readFbo = 0;
+    if (gl_getIntegerv != NULL) {
+        gl_getIntegerv(0x0BA2 /* GL_VIEWPORT */, viewport);
+        gl_getIntegerv(0x8CAA /* GL_READ_FRAMEBUFFER_BINDING */, &readFbo);
+    }
+
+    /* Does the window itself hold anything? glReadPixels takes its source from
+       whatever framebuffer is bound, and the client leaves its own bound — so
+       several earlier "the frame is black" readings were looks into RuneLite's
+       scene buffer rather than at the window. */
+    int lit = -1;
+    if (gl_readPixels != NULL && gl_bindFramebuffer != NULL
+            && viewport[2] > 0 && viewport[3] > 0) {
+        gl_bindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, 0);
+        unsigned char px[8 * 8 * 4];
+        memset(px, 0, sizeof(px));
+        gl_readPixels(viewport[0] + viewport[2] / 2, viewport[1] + viewport[3] / 2,
+                      8, 8, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, px);
+        lit = 0;
+        for (unsigned i = 0; i < sizeof(px); i++) {
+            if ((i % 4) != 3 && px[i] > lit) lit = px[i];
+        }
+        gl_bindFramebuffer(0x8CA8, (unsigned int) readFbo);
+    }
+
     EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
 
-    /* Once, on the first frame. "The context came up" and "frames actually
-       reach the window" are different claims, and a whole debugging session
-       went into telling them apart. The sizes are here because a drawable that
-       does not match the AWT canvas is the failure that looks like a working
-       renderer drawing in the wrong place. */
-    static int reported = 0;
-    if (!reported) {
-        reported = 1;
-        EGLint sw = -1, sh = -1;
-        if (egl.querySurface != NULL) {
-            egl.querySurface(ctx->dpy, ctx->surface, EGL_WIDTH, &sw);
-            egl.querySurface(ctx->dpy, ctx->surface, EGL_HEIGHT, &sh);
-        }
-        char msg[160];
-        snprintf(msg, sizeof(msg), "first frame swapped ok=%d, surface %dx%d, window %dx%d",
-                 (int) ok, sw, sh,
-                 ANativeWindow_getWidth(ctx->window), ANativeWindow_getHeight(ctx->window));
-        rlawtNote(msg);
+    char state[192];
+    snprintf(state, sizeof(state),
+             "window %dx%d surface %dx%d viewport %d,%d %dx%d fbo %d ok %d brightest %d",
+             windowW, windowH, surfaceW, surfaceH,
+             viewport[0], viewport[1], viewport[2], viewport[3],
+             readFbo, (int) ok, lit);
+    if (strcmp(state, ctx->lastState) != 0) {
+        snprintf(ctx->lastState, sizeof(ctx->lastState), "%s", state);
+        rlawtNote(state);
     }
 }
 
