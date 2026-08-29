@@ -88,6 +88,7 @@ typedef struct {
     int stencilDepth;
     int multisamples;
     int insetX, insetY;
+    int builtForWidth, builtForHeight;
 } AndroidAWTContext;
 
 /* logcat overflows during a client startup, so anything worth reading also goes
@@ -401,6 +402,8 @@ Java_net_runelite_rlawt_AWTContext_createGLContext(JNIEnv *env, jobject self) {
         rlawtThrow(env, msg);
         return;
     }
+    ctx->builtForWidth = ANativeWindow_getWidth(ctx->window);
+    ctx->builtForHeight = ANativeWindow_getHeight(ctx->window);
     /* Leave it current, as the other backends do. RuneLite calls
        GL.createCapabilities right after this, and LWJGL resolves every GL entry
        point through the current context: without one they all come back null and
@@ -442,10 +445,60 @@ Java_net_runelite_rlawt_AWTContext_detachCurrent(JNIEnv *env, jobject self) {
     egl.makeCurrent(ctx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 }
 
+/* Rotating the device resizes the ANativeWindow under a surface EGL has already
+   built, and the surface does not follow: a first frame has been logged with a
+   2244x1008 surface on a 1008x2244 window. This is the kopper build of zink,
+   which presents nothing whenever the drawable and the window disagree, so from
+   the first rotation onwards the scene is simply absent while the software
+   layer above it keeps drawing the window chrome — the frame is there and the
+   game is not.
+
+   An earlier attempt at this failed with EGL_BAD_ALLOC and was wrongly written
+   off as unnecessary. The error was the call order: EGL will not hold two
+   window surfaces on one native window, so the old one has to be released
+   first, which in turn means dropping it as current before releasing it. */
+static void rebuildSurfaceIfWindowResized(AndroidAWTContext *ctx) {
+    if (ctx->window == NULL || egl.destroySurface == NULL) return;
+
+    int width = ANativeWindow_getWidth(ctx->window);
+    int height = ANativeWindow_getHeight(ctx->window);
+    if (width <= 0 || height <= 0) return;
+    if (width == ctx->builtForWidth && height == ctx->builtForHeight) return;
+
+    /* One attempt per window size: if the driver hands back a surface that
+       still disagrees, retrying would rebuild sixty times a second. */
+    int wasWidth = ctx->builtForWidth, wasHeight = ctx->builtForHeight;
+    ctx->builtForWidth = width;
+    ctx->builtForHeight = height;
+
+    egl.makeCurrent(ctx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    egl.destroySurface(ctx->dpy, ctx->surface);
+    ctx->surface = egl.createWindowSurface(ctx->dpy, ctx->config,
+                                           (EGLNativeWindowType) ctx->window, NULL);
+
+    char msg[160];
+    if (ctx->surface == EGL_NO_SURFACE) {
+        snprintf(msg, sizeof(msg), "surface rebuild for %dx%d failed: 0x%04x",
+                 width, height, egl.getError());
+        rlawtNote(msg);
+        return;
+    }
+    if (!egl.makeCurrent(ctx->dpy, ctx->surface, ctx->surface, ctx->context)) {
+        snprintf(msg, sizeof(msg), "rebuilt surface would not go current: 0x%04x",
+                 egl.getError());
+        rlawtNote(msg);
+        return;
+    }
+    snprintf(msg, sizeof(msg), "surface rebuilt %dx%d -> %dx%d after a window resize",
+             wasWidth, wasHeight, width, height);
+    rlawtNote(msg);
+}
+
 JNIEXPORT void JNICALL
 Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     AndroidAWTContext *ctx = ctxOf(env, self);
     if (ctx == NULL || ctx->dpy == NULL || ctx->surface == NULL) return;
+    rebuildSurfaceIfWindowResized(ctx);
     EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
 
     /* Once, on the first frame. "The context came up" and "frames actually
