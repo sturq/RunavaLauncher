@@ -131,8 +131,19 @@ static void *openLib(const char *name, int flags) {
 static int loadEgl(JNIEnv *env) {
     if (egl.loaded) return 1;
 
+    /* Mesa explains its own failures under this, in logcat as EGL-MAIN. Every
+       eglInitialize failure so far has been a driver it could not find or load,
+       and the message says which — far cheaper than guessing at the env. Not
+       forced: an outer setting wins. */
+    setenv("EGL_LOG_LEVEL", "debug", 0);
+
     const char *dir = getenv("POJAV_NATIVEDIR");
     if (dir != NULL) setenv("LIBGL_DRIVERS_PATH", dir, 1);
+    {
+        char msg[320];
+        snprintf(msg, sizeof(msg), "POJAV_NATIVEDIR=%s", dir != NULL ? dir : "(unset)");
+        rlawtNote(msg);
+    }
     setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1);
     setenv("GALLIUM_DRIVER", "zink", 1);
     setenv("MESA_ANDROID_NO_KMS_SWRAST", "1", 1);
