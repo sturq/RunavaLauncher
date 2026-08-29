@@ -363,40 +363,6 @@ public class WindowMaximizerAgent {
         javax.swing.SwingUtilities.invokeLater(WindowMaximizerAgent::sweep);
     }
 
-    /** Where the game canvas sits on the Cacio screen, as "x y w h".
-     *
-     *  With the GPU plugin on, that rectangle is drawn by OpenGL into a
-     *  separate layer underneath, and Cacio fills the same area with opaque
-     *  black — which covers the scene completely. The launcher needs the
-     *  rectangle so it can leave a transparent hole there instead of copying
-     *  black over the top. It is also most of the screen, so not copying it is
-     *  the bulk of the per-frame cost gone.
-     *
-     *  A file rather than a return value because this runs inside the game JVM
-     *  and the reader is Android-side, which is how the existing input IPC
-     *  works too. */
-    private static void reportGameCanvasBounds() {
-        String home = System.getProperty("user.home");
-        if (home == null) return;
-        try {
-            for (Frame f : Frame.getFrames()) {
-                if (f == null || !f.isVisible() || !f.isShowing()) continue;
-                Component canvas = findGameCanvas(f);
-                if (canvas == null || !canvas.isShowing()) continue;
-                java.awt.Point p = canvas.getLocationOnScreen();
-                String line = p.x + " " + p.y + " " + canvas.getWidth() + " " + canvas.getHeight();
-                if (line.equals(sLastCanvasBounds)) return;
-                sLastCanvasBounds = line;
-                java.io.File out = new java.io.File(home, ".runelitedroid_canvas");
-                try (java.io.FileWriter w = new java.io.FileWriter(out, false)) {
-                    w.write(line);
-                }
-                System.out.println("[WindowMaximizerAgent] game canvas at " + line);
-                return;
-            }
-        } catch (Throwable ignored) {}
-    }
-    private static String sLastCanvasBounds = "";
 
     private static void sweep() {
         // The canvas rectangle now comes from rlawt, which sees it change in

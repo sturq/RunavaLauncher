@@ -509,8 +509,21 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
        covered and half was not — which is what "half the image loads late"
        looks like.
        This is the same instant the scene geometry changes, and the offset is
-       RuneLite's own, handed to configureInsets and ignored until now. */
+       RuneLite's own, handed to configureInsets and ignored until now.
+
+       The rectangle is written in Android's coordinates, which count rows from
+       the top, while the viewport counts them from the bottom. Publishing the
+       viewport's own origin put the hole at the top of the screen while the
+       scene was drawn at the bottom: at the login screen that is a 765x503
+       viewport in a 1008x2244 window, so the two were 1741 rows apart and the
+       AWT layer covered the scene with the black Cacio paints there. It looked
+       like the renderer failing intermittently because the two only coincide
+       when the viewport is about as tall as the window, which is true once
+       RuneLite's canvas has grown and false on the login screen. */
     if (geometryChanged && viewport[2] > 0 && viewport[3] > 0) {
+        int holeX = viewport[0] + ctx->insetX;
+        int holeY = windowH - viewport[1] - viewport[3] + ctx->insetY;
+        if (holeY < 0) holeY = 0;
         const char *dir = getenv("RUNAVA_RLAWT_LOG");
         if (dir != NULL) {
             char path[512];
@@ -520,7 +533,7 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
                 snprintf(slash + 1, sizeof(path) - (slash + 1 - path), ".runelitedroid_canvas");
                 FILE *f = fopen(path, "w");
                 if (f != NULL) {
-                    fprintf(f, "%d %d %d %d", ctx->insetX, ctx->insetY, viewport[2], viewport[3]);
+                    fprintf(f, "%d %d %d %d", holeX, holeY, viewport[2], viewport[3]);
                     fclose(f);
                 }
             }
