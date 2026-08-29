@@ -574,15 +574,21 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
 
     EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
 
+    /* Brightness is deliberately not part of the comparison: the login screen
+       animates, so including it made every single frame count as a change and
+       buried the transitions this is for. Whether the window is lit at all is
+       the interesting part, so it is bucketed to dark or lit. */
     char state[192];
     snprintf(state, sizeof(state),
-             "window %dx%d surface %dx%d viewport %d,%d %dx%d fbo %d ok %d brightest %d",
+             "window %dx%d surface %dx%d viewport %d,%d %dx%d fbo %d ok %d window %s",
              windowW, windowH, surfaceW, surfaceH,
              viewport[0], viewport[1], viewport[2], viewport[3],
-             readFbo, (int) ok, lit);
+             readFbo, (int) ok, lit < 0 ? "unread" : (lit < 8 ? "DARK" : "lit"));
     if (strcmp(state, ctx->lastState) != 0) {
         snprintf(ctx->lastState, sizeof(ctx->lastState), "%s", state);
-        rlawtNote(state);
+        char withValue[224];
+        snprintf(withValue, sizeof(withValue), "%s (brightest %d)", state, lit);
+        rlawtNote(withValue);
     }
 }
 
