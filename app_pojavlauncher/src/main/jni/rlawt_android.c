@@ -91,6 +91,7 @@ typedef struct {
     int builtForWidth, builtForHeight;
     int failedForWidth, failedForHeight;
     char lastState[192];
+    int awtWidth, awtHeight, awtStride;
 } AndroidAWTContext;
 
 /* logcat overflows during a client startup, so anything worth reading also goes
@@ -226,6 +227,27 @@ static unsigned char (*gl_isEnabled)(unsigned int) = NULL;
 static void (*gl_clearColor)(float, float, float, float) = NULL;
 static void (*gl_clear)(unsigned int) = NULL;
 static void (*gl_getFloatv)(unsigned int, float *) = NULL;
+static void (*gl_genTextures)(int, unsigned int *) = NULL;
+static void (*gl_bindTexture)(unsigned int, unsigned int) = NULL;
+static void (*gl_texImage2D)(unsigned int, int, int, int, int, int, unsigned int, unsigned int, const void *) = NULL;
+static void (*gl_texSubImage2D)(unsigned int, int, int, int, int, int, unsigned int, unsigned int, const void *) = NULL;
+static void (*gl_texParameteri)(unsigned int, unsigned int, int) = NULL;
+static void (*gl_pixelStorei)(unsigned int, int) = NULL;
+static void (*gl_blendFunc)(unsigned int, unsigned int) = NULL;
+static void (*gl_pushAttrib)(unsigned int) = NULL;
+static void (*gl_popAttrib)(void) = NULL;
+static void (*gl_matrixMode)(unsigned int) = NULL;
+static void (*gl_pushMatrix)(void) = NULL;
+static void (*gl_popMatrix)(void) = NULL;
+static void (*gl_loadIdentity)(void) = NULL;
+static void (*gl_ortho)(double, double, double, double, double, double) = NULL;
+static void (*gl_viewport)(int, int, int, int) = NULL;
+static void (*gl_begin)(unsigned int) = NULL;
+static void (*gl_end)(void) = NULL;
+static void (*gl_texCoord2f)(float, float) = NULL;
+static void (*gl_vertex2f)(float, float) = NULL;
+static void (*gl_color4f)(float, float, float, float) = NULL;
+static void (*gl_useProgram)(unsigned int) = NULL;
 
 /* Ask through the same path LWJGL will use and report what comes back, one step
    at a time. Nothing resolved here is called: a bad pointer that is not null
@@ -265,6 +287,27 @@ static void reportWhatLwjglWillSee(void) {
     gl_clearColor      = getProc("glClearColor");
     gl_clear           = getProc("glClear");
     gl_getFloatv       = getProc("glGetFloatv");
+    gl_genTextures     = getProc("glGenTextures");
+    gl_bindTexture     = getProc("glBindTexture");
+    gl_texImage2D      = getProc("glTexImage2D");
+    gl_texSubImage2D   = getProc("glTexSubImage2D");
+    gl_texParameteri   = getProc("glTexParameteri");
+    gl_pixelStorei     = getProc("glPixelStorei");
+    gl_blendFunc       = getProc("glBlendFunc");
+    gl_pushAttrib      = getProc("glPushAttrib");
+    gl_popAttrib       = getProc("glPopAttrib");
+    gl_matrixMode      = getProc("glMatrixMode");
+    gl_pushMatrix      = getProc("glPushMatrix");
+    gl_popMatrix       = getProc("glPopMatrix");
+    gl_loadIdentity    = getProc("glLoadIdentity");
+    gl_ortho           = getProc("glOrtho");
+    gl_viewport        = getProc("glViewport");
+    gl_begin           = getProc("glBegin");
+    gl_end             = getProc("glEnd");
+    gl_texCoord2f      = getProc("glTexCoord2f");
+    gl_vertex2f        = getProc("glVertex2f");
+    gl_color4f         = getProc("glColor4f");
+    gl_useProgram      = getProc("glUseProgram");
 }
 
 /*
@@ -539,6 +582,152 @@ static void rebuildSurfaceIfWindowResized(AndroidAWTContext *ctx) {
     rlawtNote(msg);
 }
 
+
+/* Composite the AWT layer into this same context, instead of a second Android
+   view stacked on top.
+ *
+ * That second view is why rotation falls apart: two surfaces plus a rectangle
+ * passed between processes, none of which turn at the same moment. Software
+ * mode has none of that — one surface, nothing to synchronise — and it rotates
+ * perfectly. This gets the same property back while keeping the scene on the
+ * GPU.
+ *
+ * Caciocavallo paints the game canvas area opaque black, so drawing its frame
+ * straight over the scene would hide it again, one layer lower. The chrome is
+ * drawn as four strips around the canvas instead. Where the canvas is comes
+ * from configureInsets and the viewport, both of which are right here, in the
+ * frame they change — no poller, no file, nothing to fall out of step.
+ *
+ * The pixels need no conversion: Cacio's 0xAARRGGBB is GL_BGRA byte order, so
+ * this uploads what the CPU path used to swizzle by hand. */
+static unsigned int overlayTexture = 0;
+static int overlayW = 0, overlayH = 0;
+static jclass overlayScreenClass = NULL;
+static jmethodID overlayGetRGB = NULL;
+
+static int overlayReady(void) {
+    return gl_genTextures && gl_bindTexture && gl_texImage2D && gl_texSubImage2D
+        && gl_texParameteri && gl_pixelStorei && gl_blendFunc && gl_pushAttrib
+        && gl_popAttrib && gl_matrixMode && gl_pushMatrix && gl_popMatrix
+        && gl_loadIdentity && gl_ortho && gl_begin && gl_end && gl_texCoord2f
+        && gl_vertex2f && gl_color4f && gl_enable && gl_disable;
+}
+
+/* Cacio ships under two package names depending on the build. */
+static int overlayResolveScreen(JNIEnv *env) {
+    if (overlayGetRGB != NULL) return 1;
+    jclass c = (*env)->FindClass(env, "net/java/openjdk/cacio/ctc/CTCScreen");
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        c = (*env)->FindClass(env, "com/github/caciocavallosilano/cacio/ctc/CTCScreen");
+    }
+    if (c == NULL) {
+        (*env)->ExceptionClear(env);
+        return 0;
+    }
+    overlayScreenClass = (*env)->NewGlobalRef(env, c);
+    overlayGetRGB = (*env)->GetStaticMethodID(env, overlayScreenClass,
+                                              "getCurrentScreenRGB", "()[I");
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    return overlayGetRGB != NULL;
+}
+
+static void overlayQuad(float x0, float y0, float x1, float y1, int w, int h) {
+    if (x1 <= x0 || y1 <= y0) return;
+    gl_begin(0x0007 /* GL_QUADS */);
+    gl_texCoord2f(x0 / w, y0 / h); gl_vertex2f(x0, y0);
+    gl_texCoord2f(x1 / w, y0 / h); gl_vertex2f(x1, y0);
+    gl_texCoord2f(x1 / w, y1 / h); gl_vertex2f(x1, y1);
+    gl_texCoord2f(x0 / w, y1 / h); gl_vertex2f(x0, y1);
+    gl_end();
+}
+
+static void drawAwtOverlay(JNIEnv *env, AndroidAWTContext *ctx,
+                           int surfaceW, int surfaceH, const int *viewport) {
+    if (!overlayReady() || !overlayResolveScreen(env)) return;
+    if (surfaceW <= 0 || surfaceH <= 0) return;
+
+    /* Visible AWT region and the stride of Cacio's square screen, published by
+       the activity the same way the window pointer is. */
+    const char *geom = getenv("RUNAVA_AWT_VISIBLE");
+    if (geom != NULL) {
+        int w = 0, h = 0, stride = 0;
+        if (sscanf(geom, "%dx%dx%d", &w, &h, &stride) == 3 && w > 0 && h > 0 && stride > 0) {
+            ctx->awtWidth = w; ctx->awtHeight = h; ctx->awtStride = stride;
+        }
+    }
+    int canvasW = ctx->awtWidth, canvasH = ctx->awtHeight;
+    if (canvasW <= 0 || canvasH <= 0) return;
+
+    jintArray pixels = (jintArray) (*env)->CallStaticObjectMethod(
+            env, overlayScreenClass, overlayGetRGB);
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); return; }
+
+    gl_pushAttrib(0x000FFFFF /* GL_ALL_ATTRIB_BITS */);
+    if (gl_useProgram != NULL) gl_useProgram(0);
+    gl_matrixMode(0x1701 /* GL_PROJECTION */); gl_pushMatrix(); gl_loadIdentity();
+    gl_ortho(0, surfaceW, surfaceH, 0, -1, 1);
+    gl_matrixMode(0x1700 /* GL_MODELVIEW */); gl_pushMatrix(); gl_loadIdentity();
+    if (gl_viewport != NULL) gl_viewport(0, 0, surfaceW, surfaceH);
+
+    gl_enable(0x0DE1 /* GL_TEXTURE_2D */);
+    if (overlayTexture == 0) {
+        gl_genTextures(1, &overlayTexture);
+        gl_bindTexture(0x0DE1, overlayTexture);
+        gl_texParameteri(0x0DE1, 0x2801 /* MIN_FILTER */, 0x2601 /* LINEAR */);
+        gl_texParameteri(0x0DE1, 0x2800 /* MAG_FILTER */, 0x2601);
+        gl_texParameteri(0x0DE1, 0x2802 /* WRAP_S */, 0x812F /* CLAMP_TO_EDGE */);
+        gl_texParameteri(0x0DE1, 0x2803 /* WRAP_T */, 0x812F);
+    } else {
+        gl_bindTexture(0x0DE1, overlayTexture);
+    }
+
+    if (pixels != NULL) {
+        jint *src = (*env)->GetPrimitiveArrayCritical(env, pixels, NULL);
+        if (src != NULL) {
+            /* Cacio hands out a square screen; only the visible corner matters. */
+            gl_pixelStorei(0x0CF2 /* GL_UNPACK_ROW_LENGTH */, ctx->awtStride);
+            if (overlayW != canvasW || overlayH != canvasH) {
+                overlayW = canvasW; overlayH = canvasH;
+                gl_texImage2D(0x0DE1, 0, 0x1908 /* GL_RGBA */, canvasW, canvasH, 0,
+                              0x80E1 /* GL_BGRA */, 0x1401 /* GL_UNSIGNED_BYTE */, src);
+            } else {
+                gl_texSubImage2D(0x0DE1, 0, 0, 0, canvasW, canvasH,
+                                 0x80E1, 0x1401, src);
+            }
+            gl_pixelStorei(0x0CF2, 0);
+            (*env)->ReleasePrimitiveArrayCritical(env, pixels, src, JNI_ABORT);
+        }
+        (*env)->DeleteLocalRef(env, pixels);
+    }
+
+    gl_disable(0x0B71 /* GL_DEPTH_TEST */);
+    gl_disable(0x0BC0 /* GL_ALPHA_TEST */);
+    gl_disable(0x0C11 /* GL_SCISSOR_TEST */);
+    gl_enable(0x0BE2 /* GL_BLEND */);
+    gl_blendFunc(0x0302 /* SRC_ALPHA */, 0x0303 /* ONE_MINUS_SRC_ALPHA */);
+    gl_color4f(1, 1, 1, 1);
+
+    /* Everything except the rectangle the client draws into. */
+    float scale = (float) surfaceW / canvasW;
+    float hx0 = ctx->insetX * scale, hy0 = ctx->insetY * scale;
+    float hx1 = hx0 + viewport[2] * scale, hy1 = hy0 + viewport[3] * scale;
+    if (hx0 < 0) hx0 = 0;
+    if (hy0 < 0) hy0 = 0;
+    if (hx1 > surfaceW) hx1 = surfaceW;
+    if (hy1 > surfaceH) hy1 = surfaceH;
+
+    int tw = canvasW, th = canvasH;
+    overlayQuad(0, 0, surfaceW, hy0, tw, th);
+    overlayQuad(0, hy1, surfaceW, surfaceH, tw, th);
+    overlayQuad(0, hy0, hx0, hy1, tw, th);
+    overlayQuad(hx1, hy0, surfaceW, hy1, tw, th);
+
+    gl_matrixMode(0x1700); gl_popMatrix();
+    gl_matrixMode(0x1701); gl_popMatrix();
+    gl_popAttrib();
+}
+
 JNIEXPORT void JNICALL
 Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     AndroidAWTContext *ctx = ctxOf(env, self);
@@ -640,26 +829,7 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
         gl_bindFramebuffer(0x8CA8, (unsigned int) readFbo);
     }
 
-    /* Spike, to be replaced by the real overlay: can anything be drawn over the
-       client's frame from here without disturbing it? If a marker shows in the
-       corner and the game keeps rendering, then compositing the AWT layer as a
-       texture in this same context is viable — and that removes the second
-       Android view, which is the thing that makes rotation fall apart. Scissor
-       and clear need no shaders and no vertex state, so this tests the hook
-       and nothing else. */
-    if (gl_scissor != NULL && gl_enable != NULL && gl_disable != NULL
-            && gl_clearColor != NULL && gl_clear != NULL && gl_isEnabled != NULL
-            && gl_getFloatv != NULL) {
-        unsigned char hadScissor = gl_isEnabled(0x0C11 /* GL_SCISSOR_TEST */);
-        float oldColor[4] = {0, 0, 0, 0};
-        gl_getFloatv(0x0C22 /* GL_COLOR_CLEAR_VALUE */, oldColor);
-        gl_enable(0x0C11);
-        gl_scissor(16, 16, 96, 96);
-        gl_clearColor(1.0f, 0.0f, 1.0f, 1.0f);
-        gl_clear(0x00004000 /* GL_COLOR_BUFFER_BIT */);
-        gl_clearColor(oldColor[0], oldColor[1], oldColor[2], oldColor[3]);
-        if (!hadScissor) gl_disable(0x0C11);
-    }
+    drawAwtOverlay(env, ctx, surfaceW, surfaceH, viewport);
 
     EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
 
