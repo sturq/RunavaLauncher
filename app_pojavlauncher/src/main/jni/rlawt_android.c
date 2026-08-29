@@ -405,6 +405,13 @@ Java_net_runelite_rlawt_AWTContext_createGLContext(JNIEnv *env, jobject self) {
         return;
     }
 
+    /* Zero width and height mean "follow the window", which is how Pojav sets
+       this up in ctxbridges/gl_bridge.c. The surface then tracks a rotation on
+       its own and never has to be torn down for one — and tearing it down is
+       exactly what its neighbouring comment warns about: some drivers take
+       most of a second to finish destroying a surface and fault if you release
+       during it. */
+    ANativeWindow_setBuffersGeometry(ctx->window, 0, 0, 0);
     ctx->surface = egl.createWindowSurface(ctx->dpy, ctx->config,
                                            (EGLNativeWindowType) ctx->window, NULL);
     if (ctx->surface == EGL_NO_SURFACE) {
@@ -456,82 +463,10 @@ Java_net_runelite_rlawt_AWTContext_detachCurrent(JNIEnv *env, jobject self) {
     egl.makeCurrent(ctx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 }
 
-/* Rotating the device resizes the ANativeWindow under a surface EGL has already
-   built, and the surface does not follow: a first frame has been logged with a
-   2244x1008 surface on a 1008x2244 window. This is the kopper build of zink,
-   which presents nothing whenever the drawable and the window disagree, so from
-   the first rotation onwards the scene is simply absent while the software
-   layer above it keeps drawing the window chrome — the frame is there and the
-   game is not.
-
-   An earlier attempt at this failed with EGL_BAD_ALLOC and was wrongly written
-   off as unnecessary. The error was the call order: EGL will not hold two
-   window surfaces on one native window, so the old one has to be released
-   first, which in turn means dropping it as current before releasing it. */
-static void rebuildSurfaceIfWindowResized(AndroidAWTContext *ctx) {
-    if (ctx->window == NULL || egl.destroySurface == NULL) return;
-
-    int width = ANativeWindow_getWidth(ctx->window);
-    int height = ANativeWindow_getHeight(ctx->window);
-    if (width <= 0 || height <= 0) return;
-    if (ctx->surface != EGL_NO_SURFACE
-            && width == ctx->builtForWidth && height == ctx->builtForHeight) {
-        return;
-    }
-
-    int wasWidth = ctx->builtForWidth, wasHeight = ctx->builtForHeight;
-    egl.makeCurrent(ctx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-    if (ctx->surface != EGL_NO_SURFACE) {
-        egl.destroySurface(ctx->dpy, ctx->surface);
-        ctx->surface = EGL_NO_SURFACE;
-    }
-    EGLSurface fresh = egl.createWindowSurface(ctx->dpy, ctx->config,
-                                               (EGLNativeWindowType) ctx->window, NULL);
-
-    char msg[160];
-    /* Record the size only once the surface is actually up. Marking it first
-       and returning on failure left the context with no surface at all, and
-       swapBuffers gives up on exactly that — so no frame was ever drawn again,
-       while the recorded size stopped any retry. That is the rotation that
-       goes black and stays black until you turn the device the other way. */
-    if (fresh == EGL_NO_SURFACE) {
-        if (ctx->failedForWidth != width || ctx->failedForHeight != height) {
-            ctx->failedForWidth = width;
-            ctx->failedForHeight = height;
-            snprintf(msg, sizeof(msg), "surface rebuild for %dx%d failed: 0x%04x, will retry",
-                     width, height, egl.getError());
-            rlawtNote(msg);
-        }
-        return;
-    }
-    if (!egl.makeCurrent(ctx->dpy, fresh, fresh, ctx->context)) {
-        egl.destroySurface(ctx->dpy, fresh);
-        if (ctx->failedForWidth != width || ctx->failedForHeight != height) {
-            ctx->failedForWidth = width;
-            ctx->failedForHeight = height;
-            snprintf(msg, sizeof(msg), "rebuilt %dx%d would not go current: 0x%04x, will retry",
-                     width, height, egl.getError());
-            rlawtNote(msg);
-        }
-        return;
-    }
-
-    ctx->surface = fresh;
-    ctx->builtForWidth = width;
-    ctx->builtForHeight = height;
-    ctx->failedForWidth = ctx->failedForHeight = 0;
-    snprintf(msg, sizeof(msg), "surface rebuilt %dx%d -> %dx%d after a window resize",
-             wasWidth, wasHeight, width, height);
-    rlawtNote(msg);
-}
-
 JNIEXPORT void JNICALL
 Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     AndroidAWTContext *ctx = ctxOf(env, self);
     if (ctx == NULL || ctx->dpy == NULL) return;
-    /* Before the surface check, not after: a failed rebuild leaves no surface,
-       and bailing out here is what made that state permanent. */
-    rebuildSurfaceIfWindowResized(ctx);
     if (ctx->surface == EGL_NO_SURFACE) return;
 
     /* Everything that decides whether a frame reaches the screen, measured in
@@ -627,6 +562,23 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     }
 
     EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
+    if (!ok && egl.getError() == 0x300D /* EGL_BAD_SURFACE */) {
+        /* The window went away underneath us. Pojav's bridge handles the same
+           case by detaching and waiting rather than carrying on against a dead
+           surface; rebuilding here instead is what left the context with no
+           surface at all and no way back. */
+        egl.makeCurrent(ctx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        if (egl.destroySurface != NULL) egl.destroySurface(ctx->dpy, ctx->surface);
+        ANativeWindow_setBuffersGeometry(ctx->window, 0, 0, 0);
+        ctx->surface = egl.createWindowSurface(ctx->dpy, ctx->config,
+                                               (EGLNativeWindowType) ctx->window, NULL);
+        if (ctx->surface != EGL_NO_SURFACE) {
+            egl.makeCurrent(ctx->dpy, ctx->surface, ctx->surface, ctx->context);
+            rlawtNote("surface was bad, rebuilt against the same window");
+        } else {
+            rlawtNote("surface was bad and would not come back");
+        }
+    }
 
     if (sampleNow) {
         snprintf(ctx->lastState, sizeof(ctx->lastState), "%s", geometry);
