@@ -166,18 +166,8 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // this listener for us to push the same numbers to the JVM-side
         // agent. The activity no longer guesses dimensions from
         // DisplayMetrics (which lagged the actual screen on rotation).
-        AWTCanvasView.setVisibleRegionListener((vw, vh) -> {
-            writeInputRequest("RESIZE " + vw + " " + vh);
-            // rlawt composites the AWT layer into its own context in GPU mode
-            // and needs the visible region plus the square's stride. Published
-            // through the process environment, the same way the window pointer
-            // reaches it — both live in this process.
-            try {
-                android.system.Os.setenv("RUNAVA_AWT_VISIBLE",
-                        vw + "x" + vh + "x" + AWTCanvasView.AWT_CANVAS_WIDTH, true);
-            } catch (Throwable ignored) {
-            }
-        });
+        AWTCanvasView.setVisibleRegionListener((vw, vh) ->
+                writeInputRequest("RESIZE " + vw + " " + vh));
         AWTCanvasView.TRANSPARENT_BACKGROUND = true;
         setContentView(R.layout.activity_runelite_game);
 
@@ -219,10 +209,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             // the scene underneath never shows. Only GPU mode needs the blend; the
             // software path paints every pixel itself and an opaque layer is
             // cheaper there.
-            // Hidden, not removed: its render thread still owns the AWT
-            // surface handshake, it simply no longer posts frames. Everything
-            // visible now comes from the one GL surface.
-            mCanvas.setAlpha(0f);
+            mCanvas.setOpaque(false);
             AWTCanvasView.SCENE_DRAWN_ELSEWHERE = true;
             // A TextureView, not a SurfaceView, and for the reason AWTCanvasView
             // gives a few lines further down: a SurfaceView's surface belongs to

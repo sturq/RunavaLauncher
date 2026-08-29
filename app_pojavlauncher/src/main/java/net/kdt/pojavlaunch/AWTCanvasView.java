@@ -201,16 +201,7 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                 // False means RuneLite has not repainted. Nothing is posted and
                 // the TextureView keeps showing the previous frame, which is the
                 // correct visual and a large idle battery win.
-                if (SCENE_DRAWN_ELSEWHERE) {
-                    // rlawt composites this layer into the scene's own GL
-                    // context now, so there is nothing to post here and no
-                    // second surface to keep in step with the first. That
-                    // second surface is what made rotation fall apart: two
-                    // buffers and a rectangle passed between processes, none
-                    // of them turning at the same moment. It also removes the
-                    // whole-screen CPU copy, measured at 8 ms of a 16 ms frame.
-                    continue;
-                }
+                if (SCENE_DRAWN_ELSEWHERE) refreshGameCanvasHole();
                 JREUtils.blitAWTScreenFrame(
                         AWT_CANVAS_WIDTH,
                         Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH),
