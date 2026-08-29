@@ -25,7 +25,9 @@
 static struct {
     unsigned long posted;
     unsigned long skipped;
-    unsigned long long blitNanos;
+    unsigned long long fetchNanos;   /* asking Cacio for the frame */
+    unsigned long long lockNanos;    /* waiting for a surface buffer */
+    unsigned long long copyNanos;    /* the pixel loop itself */
     unsigned long long lastReportNanos;
 } blitStats;
 
@@ -172,6 +174,7 @@ JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreen
 
     jintArray jreRgbArray = (jintArray) (*runtimeJNIEnvPtr_GRAPHICS)->CallStaticObjectMethod(
         runtimeJNIEnvPtr_GRAPHICS, class_CTCScreen, method_GetRGB);
+    unsigned long long tFetched = monotonicNanos();
     if (jreRgbArray == NULL) {
         /* Cacio returns null when nothing repainted. Counting these separates
            "the client is slow" from "our copy is slow", which is the whole
@@ -187,7 +190,9 @@ JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreen
     }
 
     ANativeWindow_Buffer buf;
-    if (ANativeWindow_lock(awtWindow, &buf, NULL) != 0) {
+    int lockFailed = ANativeWindow_lock(awtWindow, &buf, NULL) != 0;
+    unsigned long long tLocked = monotonicNanos();
+    if (lockFailed) {
         (*runtimeJNIEnvPtr_GRAPHICS)->DeleteLocalRef(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray);
         return JNI_FALSE;
     }
@@ -261,6 +266,7 @@ JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreen
         posted = JNI_TRUE;
     }
 
+    unsigned long long tCopied = monotonicNanos();
     ANativeWindow_unlockAndPost(awtWindow);
     /* The old code never released this. Nothing frees local refs on a thread
        attached to the runtime VM outside a native call boundary, so one
@@ -269,22 +275,27 @@ JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreen
 
     unsigned long long now = monotonicNanos();
     blitStats.posted++;
-    blitStats.blitNanos += now - t0;
+    blitStats.fetchNanos += tFetched - t0;
+    blitStats.lockNanos  += tLocked - tFetched;
+    blitStats.copyNanos  += tCopied - tLocked;
     if (blitStats.lastReportNanos == 0) blitStats.lastReportNanos = now;
     unsigned long long window = now - blitStats.lastReportNanos;
     if (window >= 5000000000ULL) {
-        unsigned long total = blitStats.posted + blitStats.skipped;
+        unsigned long p = blitStats.posted ? blitStats.posted : 1;
         __android_log_print(ANDROID_LOG_INFO, "awtblit",
-                "%dx%d: %lu frames posted, %lu skipped in %llums — %llu us each, "
-                "%lu%% of the frame budget, %llu posted/s",
+                "%dx%d: %lu posted, %lu skipped in %llums — fetch %llu us, "
+                "lock %llu us, copy %llu us, %llu posted/s",
                 visibleWidth, visibleHeight, blitStats.posted, blitStats.skipped,
                 window / 1000000ULL,
-                blitStats.blitNanos / (blitStats.posted * 1000ULL),
-                (unsigned long) (blitStats.blitNanos / (total ? total : 1) * 100ULL / 16666667ULL),
+                blitStats.fetchNanos / (p * 1000ULL),
+                blitStats.lockNanos / (p * 1000ULL),
+                blitStats.copyNanos / (p * 1000ULL),
                 blitStats.posted * 1000000000ULL / window);
         blitStats.posted = 0;
         blitStats.skipped = 0;
-        blitStats.blitNanos = 0;
+        blitStats.fetchNanos = 0;
+        blitStats.lockNanos = 0;
+        blitStats.copyNanos = 0;
         blitStats.lastReportNanos = now;
     }
     return posted;
