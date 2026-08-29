@@ -8,10 +8,10 @@
    a single table lookup. Both architectures we build for have one. */
 #if defined(__aarch64__)
 #include <arm_neon.h>
-#define BLIT_VECTOR_DISABLED_FOR_MEASUREMENT 1
+#define BLIT_VECTOR 1
 #elif defined(__x86_64__)
 #include <tmmintrin.h>
-#define BLIT_VECTOR_DISABLED_FOR_MEASUREMENT 1
+#define BLIT_VECTOR 1
 #endif
 #include <android/log.h>
 #include <android/native_window.h>
