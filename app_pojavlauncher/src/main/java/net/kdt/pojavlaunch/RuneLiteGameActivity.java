@@ -530,10 +530,15 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
      *  size and the composite transform does the scaling instead, where it is
      *  free.
      *
-     *  Anchored at the top left, measured rather than reasoned: on a frame
-     *  where the client was visible its content began at y=7 of 2244, where a
-     *  bottom anchor would have put it at 84. Getting that wrong pushes the
-     *  scene off the top edge and looks exactly like a dead renderer. */
+     *  Anchored at the bottom, which is where GL's own origin puts it. An
+     *  earlier reading said top, taken from a portrait frame whose canvas
+     *  covered 2160 of 2244 rows — 84 pixels of slack, too little to tell the
+     *  two apart. In landscape the slack is 235 and the scene sits visibly on
+     *  the bottom edge.
+     *
+     *  This matters for more than looks: input is mapped in client
+     *  coordinates, so a scene drawn somewhere else means every tap lands
+     *  where the button is not. */
     private void alignSceneToCanvas(int viewWidth, int viewHeight) {
         if (viewWidth <= 0 || viewHeight <= 0) return;
         int square = AWTCanvasView.AWT_CANVAS_WIDTH;
@@ -541,6 +546,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         int visibleH = SceneGeometry.visibleHeight(square, viewWidth, viewHeight);
         android.graphics.Matrix m = new android.graphics.Matrix();
         m.setScale((float) viewWidth / visibleW, (float) viewHeight / visibleH);
+        m.preTranslate(0f, -(viewHeight - visibleH));
         mGlSurface.setTransform(m);
         gpuLog("scene scaled from " + visibleW + "x" + visibleH
                 + " to " + viewWidth + "x" + viewHeight);
