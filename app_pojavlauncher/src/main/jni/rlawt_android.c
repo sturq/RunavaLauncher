@@ -568,20 +568,34 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     int sampleNow = geometryChanged || (swaps % 600) == 0;
     swaps++;
 
-    /* glReadPixels takes its source from whatever framebuffer is bound, and the
-       client leaves its own bound — so several earlier "the frame is black"
+    /* Sample a grid over the whole viewport, not one point. The single centre
+       sample said DARK in portrait and lit in landscape, which reads like the
+       renderer failing — but the login art is 503 rows tall at one end of a
+       2160-row canvas, so the centre simply falls outside it. Where the
+       drawing is matters as much as whether there is any.
+
+       glReadPixels takes its source from whatever framebuffer is bound, and
+       the client leaves its own bound, so several earlier "the frame is black"
        readings were looks into RuneLite's scene buffer rather than the window. */
-    int lit = -1;
+    char grid[64] = "";
     if (sampleNow && gl_readPixels != NULL && gl_bindFramebuffer != NULL
-            && viewport[2] > 0 && viewport[3] > 0) {
+            && viewport[2] > 16 && viewport[3] > 16) {
         gl_bindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, 0);
-        unsigned char px[8 * 8 * 4];
-        memset(px, 0, sizeof(px));
-        gl_readPixels(viewport[0] + viewport[2] / 2, viewport[1] + viewport[3] / 2,
-                      8, 8, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, px);
-        lit = 0;
-        for (unsigned i = 0; i < sizeof(px); i++) {
-            if ((i % 4) != 3 && px[i] > lit) lit = px[i];
+        char *out = grid;
+        for (int gy = 2; gy >= 0; gy--) {
+            for (int gx = 0; gx < 3; gx++) {
+                unsigned char px[8 * 8 * 4];
+                memset(px, 0, sizeof(px));
+                gl_readPixels(viewport[0] + (viewport[2] - 8) * gx / 2,
+                              viewport[1] + (viewport[3] - 8) * gy / 2,
+                              8, 8, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, px);
+                int brightest = 0;
+                for (unsigned i = 0; i < sizeof(px); i++) {
+                    if ((i % 4) != 3 && px[i] > brightest) brightest = px[i];
+                }
+                out += snprintf(out, sizeof(grid) - (out - grid), "%3d", brightest);
+            }
+            if (gy > 0) out += snprintf(out, sizeof(grid) - (out - grid), " /");
         }
         gl_bindFramebuffer(0x8CA8, (unsigned int) readFbo);
     }
@@ -590,10 +604,9 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
 
     if (sampleNow) {
         snprintf(ctx->lastState, sizeof(ctx->lastState), "%s", geometry);
-        char msg[224];
-        snprintf(msg, sizeof(msg), "%s ok %d window %s (brightest %d)",
-                 geometry, (int) ok,
-                 lit < 0 ? "unread" : (lit < 8 ? "DARK" : "lit"), lit);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "%s ok %d, window top to bottom:%s",
+                 geometry, (int) ok, grid[0] ? grid : " unread");
         rlawtNote(msg);
     }
 }
