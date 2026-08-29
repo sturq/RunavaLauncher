@@ -283,12 +283,29 @@ JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreen
             }                                                                  \
         } while (0)
 #endif
+        /* Clearing the hole is only needed while something else might still be
+           in it. Doing it every frame replaced an 8 MB copy with an 8 MB
+           memset, which is the same write traffic into the same
+           write-combining buffer — the hole measured as no saving at all.
+           The surface has a handful of buffers in its swap chain, so clear for
+           a few frames after the rectangle moves and then leave it alone. */
+        static int holeSignature = 0, clearFramesLeft = 0;
+        int signature = holeX0 * 31 + holeY0 * 37 + holeX1 * 41 + holeY1 * 43 + w * 7 + h;
+        if (signature != holeSignature) {
+            holeSignature = signature;
+            clearFramesLeft = 8;
+        } else if (clearFramesLeft > 0) {
+            clearFramesLeft--;
+        }
+
         for (int y = 0; y < h; y++) {
             const uint32_t *s = (const uint32_t *) src + (size_t) y * (size_t) canvasWidth;
             uint32_t *d = (uint32_t *) buf.bits + (size_t) y * (size_t) buf.stride;
             if (y >= holeY0 && y < holeY1 && holeX1 > holeX0) {
                 BLIT_RANGE(s, d, 0, holeX0);
-                memset(d + holeX0, 0, (size_t) (holeX1 - holeX0) * sizeof(uint32_t));
+                if (clearFramesLeft > 0) {
+                    memset(d + holeX0, 0, (size_t) (holeX1 - holeX0) * sizeof(uint32_t));
+                }
                 BLIT_RANGE(s, d, holeX1, w);
             } else {
                 BLIT_RANGE(s, d, 0, w);
