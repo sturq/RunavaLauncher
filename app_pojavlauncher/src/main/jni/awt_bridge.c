@@ -202,8 +202,9 @@ JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreen
                pixel — one table lookup for four pixels at a time. Measured at
                24% of a 60 Hz frame as a scalar loop, which is worth removing
                before anything else in the software renderer. */
-            const uint8x16_t swapRB = vld1q_u8((const uint8_t[16]){
-                    2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15});
+            static const uint8_t swapRBIndices[16] = {
+                    2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15};
+            const uint8x16_t swapRB = vld1q_u8(swapRBIndices);
             const uint8x16_t alphaBits = vreinterpretq_u8_u32(vdupq_n_u32(forceAlpha));
             for (; x + 4 <= w; x += 4) {
                 uint8x16_t v = vld1q_u8((const uint8_t *) (s + x));
