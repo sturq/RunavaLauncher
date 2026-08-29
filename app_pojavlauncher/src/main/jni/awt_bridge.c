@@ -192,20 +192,45 @@ JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreen
         int w = buf.width  < visibleWidth  ? buf.width  : visibleWidth;
         int h = buf.height < visibleHeight ? buf.height : visibleHeight;
         uint32_t forceAlpha = opaque ? 0xFF000000u : 0u;
+#ifdef __aarch64__
+        /* Cacio's 0xAARRGGBB lands in memory as B,G,R,A and the surface wants
+           R,G,B,A, so the whole conversion is a byte swap inside each pixel —
+           one table lookup for four pixels at a time. Measured at 24% of a
+           60 Hz frame as a scalar loop, which is the largest single cost in
+           the software renderer that is ours to remove. */
+        static const uint8_t swapRBIndices[16] = {
+                2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15};
+        const uint8x16_t swapRB = vld1q_u8(swapRBIndices);
+        const uint8x16_t alphaBits = vreinterpretq_u8_u32(vdupq_n_u32(forceAlpha));
+
+        /* A wrong index in that table tints the entire UI, and the vector path
+           only exists on arm64 — so it cannot be exercised on the x86_64 build
+           the emulator runs, and a mistake would surface on a phone. Check it
+           against the scalar conversion once per process instead. */
+        static int swizzleVerified = 0;
+        if (!swizzleVerified) {
+            swizzleVerified = 1;
+            const uint32_t probe[4] = {0x11223344u, 0x55667788u, 0x99aabbccu, 0xddeeff00u};
+            uint32_t got[4];
+            vst1q_u8((uint8_t *) got,
+                     vorrq_u8(vqtbl1q_u8(vld1q_u8((const uint8_t *) probe), swapRB), alphaBits));
+            for (int i = 0; i < 4; i++) {
+                uint32_t p = probe[i];
+                uint32_t want = (p & 0xFF00FF00u) | ((p >> 16) & 0x000000FFu)
+                                | ((p & 0x000000FFu) << 16) | forceAlpha;
+                if (got[i] != want) {
+                    __android_log_print(ANDROID_LOG_ERROR, "awtblit",
+                            "vector swizzle is wrong: %08x became %08x, expected %08x",
+                            p, got[i], want);
+                }
+            }
+        }
+#endif
         for (int y = 0; y < h; y++) {
             const uint32_t *s = (const uint32_t *) src + (size_t) y * (size_t) canvasWidth;
             uint32_t *d = (uint32_t *) buf.bits + (size_t) y * (size_t) buf.stride;
             int x = 0;
 #ifdef __aarch64__
-            /* Cacio's 0xAARRGGBB lands in memory as B,G,R,A and the surface
-               wants R,G,B,A, so the whole conversion is a byte swap within each
-               pixel — one table lookup for four pixels at a time. Measured at
-               24% of a 60 Hz frame as a scalar loop, which is worth removing
-               before anything else in the software renderer. */
-            static const uint8_t swapRBIndices[16] = {
-                    2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15};
-            const uint8x16_t swapRB = vld1q_u8(swapRBIndices);
-            const uint8x16_t alphaBits = vreinterpretq_u8_u32(vdupq_n_u32(forceAlpha));
             for (; x + 4 <= w; x += 4) {
                 uint8x16_t v = vld1q_u8((const uint8_t *) (s + x));
                 vst1q_u8((uint8_t *) (d + x), vorrq_u8(vqtbl1q_u8(v, swapRB), alphaBits));
