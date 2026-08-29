@@ -565,6 +565,32 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
              windowW, windowH, surfaceW, surfaceH,
              viewport[0], viewport[1], viewport[2], viewport[3], readFbo);
     int geometryChanged = strcmp(geometry, ctx->lastState) != 0;
+
+    /* Publish where the scene is, from inside the render path.
+       The launcher cuts a transparent hole in the software layer so this scene
+       shows through, and it used to get the rectangle from the JVM-side agent,
+       which polls. On a rotation the two moved at different times: for a
+       moment the hole sat where the canvas used to be, so half the picture was
+       covered and half was not — which is what "half the image loads late"
+       looks like.
+       This is the same instant the scene geometry changes, and the offset is
+       RuneLite's own, handed to configureInsets and ignored until now. */
+    if (geometryChanged && viewport[2] > 0 && viewport[3] > 0) {
+        const char *dir = getenv("RUNAVA_RLAWT_LOG");
+        if (dir != NULL) {
+            char path[512];
+            snprintf(path, sizeof(path), "%s", dir);
+            char *slash = strrchr(path, '/');
+            if (slash != NULL) {
+                snprintf(slash + 1, sizeof(path) - (slash + 1 - path), ".runelitedroid_canvas");
+                FILE *f = fopen(path, "w");
+                if (f != NULL) {
+                    fprintf(f, "%d %d %d %d", ctx->insetX, ctx->insetY, viewport[2], viewport[3]);
+                    fclose(f);
+                }
+            }
+        }
+    }
     int sampleNow = geometryChanged || (swaps % 600) == 0;
     swaps++;
 

@@ -399,7 +399,9 @@ public class WindowMaximizerAgent {
     private static String sLastCanvasBounds = "";
 
     private static void sweep() {
-        reportGameCanvasBounds();
+        // The canvas rectangle now comes from rlawt, which sees it change in
+        // the same frame the scene does. Reporting it from here as well meant
+        // two writers to one file and a rectangle that lagged a rotation.
         Frame[] frames = Frame.getFrames();
         if (frames.length == 0) return;
         int targetW = sTargetW;
