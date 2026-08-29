@@ -225,6 +225,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture available " + w + "x" + h);
+                    sizeSceneBuffer(t, w, h);
                     alignSceneToCanvas(w, h);
                     JREUtils.setupBridgeWindow(new android.view.Surface(t));
                     mSceneSurfaceReady.countDown();
@@ -233,14 +234,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture resized to " + w + "x" + h);
-                    // Assert the buffer's new geometry rather than assume it
-                    // followed. After a rotation the scene came out squeezed by
-                    // exactly the screen's aspect ratio — the signature of a
-                    // buffer still holding the other orientation while the view
-                    // had already turned, with Android mapping one onto the
-                    // other. This is not the shrink that kopper refuses: it is
-                    // the view's own size, which is the size it should be.
-                    t.setDefaultBufferSize(w, h);
+                    sizeSceneBuffer(t, w, h);
                     alignSceneToCanvas(w, h);
                 }
 
@@ -554,6 +548,22 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     private int mSceneViewW, mSceneViewH;
     private int mCanvasX, mCanvasY, mCanvasW, mCanvasH;
 
+    /** Give the scene buffer the AWT canvas's dimensions, exactly as
+     *  AWTCanvasView does for the software layer, and let the compositor scale
+     *  it to the view. Both layers then get their scaling from the same place
+     *  and cannot drift apart — which is what a rotation kept doing while the
+     *  scale lived in a matrix here and the buffer geometry lived elsewhere. */
+    private static void sizeSceneBuffer(android.graphics.SurfaceTexture t, int viewW, int viewH) {
+        if (viewW <= 0 || viewH <= 0) return;
+        int square = AWTCanvasView.AWT_CANVAS_WIDTH;
+        t.setDefaultBufferSize(SceneGeometry.visibleWidth(square, viewW, viewH),
+                               SceneGeometry.visibleHeight(square, viewW, viewH));
+    }
+
+    /** All that is left for the transform: OpenGL renders at its drawable's own
+     *  origin, the bottom left, while RuneLite may have placed the canvas
+     *  anywhere on the Cacio screen. So this is a translation and nothing else.
+     *  No scale factor to get out of step with the buffer. */
     private void alignSceneToCanvas(int viewWidth, int viewHeight) {
         if (viewWidth > 0 && viewHeight > 0) {
             mSceneViewW = viewWidth;
@@ -564,33 +574,22 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         int square = AWTCanvasView.AWT_CANVAS_WIDTH;
         int visibleW = SceneGeometry.visibleWidth(square, mSceneViewW, mSceneViewH);
         int visibleH = SceneGeometry.visibleHeight(square, mSceneViewW, mSceneViewH);
-        float scale = (float) mSceneViewW / visibleW;
-
-        // A rotation changes the view immediately and the canvas a moment
-        // later, so for that moment the rectangle still describes the other
-        // orientation. Recomputing from it produces the stretched frame; keep
-        // showing the previous one until the two agree again.
         if (mCanvasX + mCanvasW > visibleW || mCanvasY + mCanvasH > visibleH) {
             gpuLog("canvas " + mCanvasW + "x" + mCanvasH + " at " + mCanvasX + "," + mCanvasY
                     + " does not fit " + visibleW + "x" + visibleH + " yet, keeping the last placement");
             return;
         }
 
+        // setTransform works in view units, and the buffer is mapped onto the
+        // view, so buffer offsets are scaled by the same ratio on the way out.
+        float toView = (float) mSceneViewW / visibleW;
         android.graphics.Matrix m = new android.graphics.Matrix();
-        m.setScale(scale, scale);
-        // OpenGL renders the canvas at its drawable's own origin, which is the
-        // bottom left — not wherever RuneLite placed the canvas on the Cacio
-        // screen. In fixed mode it centres a 765x503 canvas, so the scene ends
-        // up somewhere else entirely: partly under the black the AWT layer
-        // paints, and offset from where taps are mapped to. Lift it off the
-        // bottom edge, then put it where the canvas actually is.
-        m.preTranslate(0f, -(mSceneViewH - mCanvasH));
-        m.postTranslate(mCanvasX * scale, mCanvasY * scale);
+        m.setTranslate(mCanvasX * toView, (mCanvasY - (visibleH - mCanvasH)) * toView);
         mGlSurface.setTransform(m);
 
-        gpuLog("scene " + mCanvasW + "x" + mCanvasH + " placed at "
-                + mCanvasX + "," + mCanvasY + " scaled " + scale
-                + " into " + mSceneViewW + "x" + mSceneViewH);
+        gpuLog("scene " + mCanvasW + "x" + mCanvasH + " at " + mCanvasX + "," + mCanvasY
+                + " in buffer " + visibleW + "x" + visibleH + " for view "
+                + mSceneViewW + "x" + mSceneViewH);
     }
 
     private boolean gpuModeEnabled() {
