@@ -34,6 +34,15 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
      *  per-frame copy, since the canvas is most of the screen. */
     public static boolean SCENE_DRAWN_ELSEWHERE = false;
 
+    /** Fired when the game canvas moves or resizes on the Cacio screen. The
+     *  scene layer has to follow it: OpenGL always draws at its drawable's own
+     *  origin, wherever RuneLite happens to have placed the canvas. */
+    public interface GameCanvasListener {
+        void onGameCanvasMoved(int x, int y, int width, int height);
+    }
+    private static GameCanvasListener sCanvasListener;
+    public static void setGameCanvasListener(GameCanvasListener l) { sCanvasListener = l; }
+
     private int mHoleX, mHoleY, mHoleW, mHoleH;
     private long mHoleReadAtMs;
     private java.io.File mHoleFile;
@@ -57,10 +66,12 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                 parts = sc.useDelimiter("\\A").next().trim().split("\\s+");
             }
             if (parts.length != 4) return;
-            mHoleX = Integer.parseInt(parts[0]);
-            mHoleY = Integer.parseInt(parts[1]);
-            mHoleW = Integer.parseInt(parts[2]);
-            mHoleH = Integer.parseInt(parts[3]);
+            int x = Integer.parseInt(parts[0]), y = Integer.parseInt(parts[1]);
+            int w = Integer.parseInt(parts[2]), h = Integer.parseInt(parts[3]);
+            if (x == mHoleX && y == mHoleY && w == mHoleW && h == mHoleH) return;
+            mHoleX = x; mHoleY = y; mHoleW = w; mHoleH = h;
+            GameCanvasListener l = sCanvasListener;
+            if (l != null) l.onGameCanvasMoved(x, y, w, h);
         } catch (Throwable ignored) {
             // A half-written file just means the previous rectangle stands.
         }

@@ -210,6 +210,10 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             // cheaper there.
             mCanvas.setOpaque(false);
             AWTCanvasView.SCENE_DRAWN_ELSEWHERE = true;
+            AWTCanvasView.setGameCanvasListener((x, y, w, h) -> mUiHandler.post(() -> {
+                mCanvasX = x; mCanvasY = y; mCanvasW = w; mCanvasH = h;
+                alignSceneToCanvas(0, 0);
+            }));
             // A TextureView, not a SurfaceView, and for the reason AWTCanvasView
             // gives a few lines further down: a SurfaceView's surface belongs to
             // the compositor and is destroyed and recreated freely. It was being
@@ -539,17 +543,36 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
      *  This matters for more than looks: input is mapped in client
      *  coordinates, so a scene drawn somewhere else means every tap lands
      *  where the button is not. */
+    private int mSceneViewW, mSceneViewH;
+    private int mCanvasX, mCanvasY, mCanvasW, mCanvasH;
+
     private void alignSceneToCanvas(int viewWidth, int viewHeight) {
-        if (viewWidth <= 0 || viewHeight <= 0) return;
+        if (viewWidth > 0 && viewHeight > 0) {
+            mSceneViewW = viewWidth;
+            mSceneViewH = viewHeight;
+        }
+        if (mSceneViewW <= 0 || mSceneViewH <= 0 || mCanvasW <= 0 || mCanvasH <= 0) return;
+
         int square = AWTCanvasView.AWT_CANVAS_WIDTH;
-        int visibleW = SceneGeometry.visibleWidth(square, viewWidth, viewHeight);
-        int visibleH = SceneGeometry.visibleHeight(square, viewWidth, viewHeight);
+        int visibleW = SceneGeometry.visibleWidth(square, mSceneViewW, mSceneViewH);
+        int visibleH = SceneGeometry.visibleHeight(square, mSceneViewW, mSceneViewH);
+        float scale = (float) mSceneViewW / visibleW;
+
         android.graphics.Matrix m = new android.graphics.Matrix();
-        m.setScale((float) viewWidth / visibleW, (float) viewHeight / visibleH);
-        m.preTranslate(0f, -(viewHeight - visibleH));
+        m.setScale(scale, scale);
+        // OpenGL renders the canvas at its drawable's own origin, which is the
+        // bottom left — not wherever RuneLite placed the canvas on the Cacio
+        // screen. In fixed mode it centres a 765x503 canvas, so the scene ends
+        // up somewhere else entirely: partly under the black the AWT layer
+        // paints, and offset from where taps are mapped to. Lift it off the
+        // bottom edge, then put it where the canvas actually is.
+        m.preTranslate(0f, -(mSceneViewH - mCanvasH));
+        m.postTranslate(mCanvasX * scale, mCanvasY * scale);
         mGlSurface.setTransform(m);
-        gpuLog("scene scaled from " + visibleW + "x" + visibleH
-                + " to " + viewWidth + "x" + viewHeight);
+
+        gpuLog("scene " + mCanvasW + "x" + mCanvasH + " placed at "
+                + mCanvasX + "," + mCanvasY + " scaled " + scale
+                + " into " + mSceneViewW + "x" + mSceneViewH);
     }
 
     private boolean gpuModeEnabled() {
