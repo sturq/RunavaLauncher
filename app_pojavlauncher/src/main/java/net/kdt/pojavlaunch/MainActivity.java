@@ -78,6 +78,12 @@ import java.util.Objects;
 
 public class MainActivity extends BaseActivity implements ControlButtonMenuListener, EditorExitable, ServiceConnection {
     public static volatile ClipboardManager GLOBAL_CLIPBOARD;
+    /** Set by whichever activity is actually hosting a game. These statics are
+     *  reached from JNI callbacks in the JVM, and Pojav's originals only ever
+     *  worked because its Minecraft activity had run first — on the RuneLite
+     *  path it never does, so they were null and the exception took the whole
+     *  game process down. */
+    public static volatile Context GLOBAL_CONTEXT;
     public static final String TAG = "MainActivity";
     public static final String INTENT_MINECRAFT_VERSION = "intent_version";
 
@@ -550,7 +556,16 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
 
     @Keep
     public static void openLink(String link) {
-        Context ctx = touchpad.getContext(); // no more better way to obtain a context statically
+        // touchpad is only ever set by the Minecraft activity; on the RuneLite
+        // path this was null and the NullPointerException, thrown inside a JNI
+        // callback, killed the game process outright. Nothing here is worth
+        // that, so fall back to the hosting activity and otherwise give up
+        // quietly.
+        Context ctx = touchpad != null ? touchpad.getContext() : GLOBAL_CONTEXT;
+        if (!(ctx instanceof Activity)) {
+            Log.w("MainActivity", "openLink without an activity context: " + link);
+            return;
+        }
         ((Activity)ctx).runOnUiThread(() -> {
             try {
                 if(link.startsWith("file:")) {
@@ -584,6 +599,10 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     @Keep
     public static void querySystemClipboard() {
         Tools.runOnUiThread(()->{
+            if (GLOBAL_CLIPBOARD == null) {
+                AWTInputBridge.nativeClipboardReceived(null, null);
+                return;
+            }
             ClipData clipData = GLOBAL_CLIPBOARD.getPrimaryClip();
             if(clipData == null) {
                 AWTInputBridge.nativeClipboardReceived(null, null);
@@ -611,7 +630,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
                 case "text/html":
                     clipData = ClipData.newHtmlText("AWT Paste", data, data);
             }
-            if(clipData != null) GLOBAL_CLIPBOARD.setPrimaryClip(clipData);
+            if(clipData != null && GLOBAL_CLIPBOARD != null) GLOBAL_CLIPBOARD.setPrimaryClip(clipData);
         });
     }
 

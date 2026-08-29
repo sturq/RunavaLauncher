@@ -258,6 +258,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         }
 
         MainActivity.GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        MainActivity.GLOBAL_CONTEXT = this;
         mKeyboardInput.setCharacterSender(new AwtCharSender());
         mDrawer.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
 
