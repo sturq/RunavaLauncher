@@ -209,6 +209,12 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             // software path paints every pixel itself and an opaque layer is
             // cheaper there.
             mCanvas.setOpaque(false);
+            // TEMPORARY, for one measurement: make the AWT layer invisible while
+            // still letting its render thread run, so what the GL layer actually
+            // puts on screen can be seen on its own. The sidebar draws and the
+            // game area is black, which is equally consistent with "GL renders
+            // nothing" and with "AWT paints opaque black over it".
+            mCanvas.setAlpha(0f);
             // A TextureView, not a SurfaceView, and for the reason AWTCanvasView
             // gives a few lines further down: a SurfaceView's surface belongs to
             // the compositor and is destroyed and recreated freely. It was being
