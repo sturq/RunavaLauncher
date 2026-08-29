@@ -66,10 +66,12 @@ jobs:
           base="https://raw.githubusercontent.com/FCL-Team/FoldCraftLauncher/c6f551e2094c74203e2a5e107d527f668b4bcae3/FCL/src/main/assets/app_runtime/java/jre25"
           dest="app_pojavlauncher/src/main/assets/components/jre-25"
           mkdir -p "$dest"
-          for f in version universal.tar.xz bin-arm64.tar.xz; do
+          # bin-x86_64 rides along for the emulator on the build machine; the
+          # app picks its binpack by Architecture.archAsString at install time.
+          for f in version universal.tar.xz bin-arm64.tar.xz bin-x86_64.tar.xz; do
             curl -fsSL "$base/$f" -o "$dest/$f"
           done
-          xz -t "$dest/universal.tar.xz" "$dest/bin-arm64.tar.xz"
+          xz -t "$dest/universal.tar.xz" "$dest/bin-arm64.tar.xz" "$dest/bin-x86_64.tar.xz"
           ls -la "$dest"
 
       - uses: gradle/actions/setup-gradle@v4

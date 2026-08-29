@@ -74,10 +74,19 @@ android {
                 arguments "APP_SHORT_COMMANDS=true"
             }
         }
-        // arm64-only: every Android phone made in the last 5+ years is arm64.
-        // Cuts CI native-build from ~4 min to ~1 min and APK download by ~60 MB.
+        // arm64 is what ships: every Android phone made in the last 5+ years is
+        // arm64, and dropping the rest cut CI native-build from ~4 min to ~1 min
+        // and the download by ~60 MB.
+        //
+        // x86_64 comes along so the thing can be run in an emulator on a build
+        // machine. GPU bring-up was costing a full build-transfer-install-launch
+        // round on a phone per hypothesis, with the answer arriving as "it looks
+        // black" — several of those turned out to be arithmetic, testable
+        // anywhere. Everything the app needs already exists for x86_64: the
+        // kopper-zink and LWJGL natives AARs both carry it, and FCL publishes a
+        // bin-x86_64 JRE binpack next to the arm64 one.
         ndk {
-            abiFilters 'arm64-v8a'
+            abiFilters 'arm64-v8a', 'x86_64'
         }
     }
 

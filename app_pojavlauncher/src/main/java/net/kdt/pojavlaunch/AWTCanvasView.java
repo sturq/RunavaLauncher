@@ -175,6 +175,12 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
             newVisW = Math.max(1, canvasDim * pw / ph);
             newVisH = canvasDim;
         }
+        // Even edges only, the same rule Pojav applies to every render dimension
+        // in Tools.getDisplayFriendlyRes. Odd sizes are how this aspect division
+        // usually comes out, and the one GPU-mode configuration that has ever
+        // put a frame on screen was the one where both edges happened to be even.
+        newVisW = Tools.getDisplayFriendlyRes(newVisW, 1f);
+        newVisH = Tools.getDisplayFriendlyRes(newVisH, 1f);
         if (newVisW != AWT_VISIBLE_WIDTH || newVisH != AWT_VISIBLE_HEIGHT) {
             AWT_VISIBLE_WIDTH = newVisW;
             AWT_VISIBLE_HEIGHT = newVisH;
