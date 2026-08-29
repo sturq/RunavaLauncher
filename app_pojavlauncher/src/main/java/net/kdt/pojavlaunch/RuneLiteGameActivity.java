@@ -233,6 +233,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture resized to " + w + "x" + h);
+                    // Assert the buffer's new geometry rather than assume it
+                    // followed. After a rotation the scene came out squeezed by
+                    // exactly the screen's aspect ratio — the signature of a
+                    // buffer still holding the other orientation while the view
+                    // had already turned, with Android mapping one onto the
+                    // other. This is not the shrink that kopper refuses: it is
+                    // the view's own size, which is the size it should be.
+                    t.setDefaultBufferSize(w, h);
                     alignSceneToCanvas(w, h);
                 }
 
