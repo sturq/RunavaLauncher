@@ -569,8 +569,12 @@ public class JREUtils {
 
     /** Write the current AWT frame into that surface and post it. False means AWT
      *  had nothing new and the surface keeps showing the previous frame. */
+    /** @param holeX,holeY,holeW,holeH a rectangle to leave fully transparent
+     *  instead of copying — the game canvas, when something else is drawing it.
+     *  Pass a zero width or height for no hole. */
     public static native boolean blitAWTScreenFrame(int canvasWidth, int visibleWidth,
-                                                    int visibleHeight, boolean opaque);
+                                                    int visibleHeight, boolean opaque,
+                                                    int holeX, int holeY, int holeW, int holeH);
     static {
         System.loadLibrary("exithook");
         System.loadLibrary("pojavexec");

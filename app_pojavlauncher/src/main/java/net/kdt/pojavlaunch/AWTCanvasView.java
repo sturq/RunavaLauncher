@@ -27,6 +27,45 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
      *  GPU plugin is on). */
     public static boolean TRANSPARENT_BACKGROUND = false;
 
+    /** True when RuneLite's GPU plugin is drawing the game canvas into the GL
+     *  layer underneath. Cacio fills that same rectangle with opaque black, and
+     *  copying it hides the scene completely — which is what "the GPU renderer
+     *  shows nothing" turned out to be. Skipping it also removes most of the
+     *  per-frame copy, since the canvas is most of the screen. */
+    public static boolean SCENE_DRAWN_ELSEWHERE = false;
+
+    private int mHoleX, mHoleY, mHoleW, mHoleH;
+    private long mHoleReadAtMs;
+    private java.io.File mHoleFile;
+
+    /** The game canvas's position on the Cacio screen, as the JVM-side agent
+     *  last reported it. Polled rather than pushed: it changes only on layout,
+     *  and the render thread is the only reader. */
+    private void refreshGameCanvasHole() {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - mHoleReadAtMs < 500) return;
+        mHoleReadAtMs = now;
+        try {
+            if (mHoleFile == null) {
+                java.io.File home = getContext().getExternalFilesDir(null);
+                if (home == null) return;
+                mHoleFile = new java.io.File(home, ".runelitedroid_canvas");
+            }
+            if (!mHoleFile.exists()) return;
+            String[] parts;
+            try (java.util.Scanner sc = new java.util.Scanner(mHoleFile)) {
+                parts = sc.useDelimiter("\\A").next().trim().split("\\s+");
+            }
+            if (parts.length != 4) return;
+            mHoleX = Integer.parseInt(parts[0]);
+            mHoleY = Integer.parseInt(parts[1]);
+            mHoleW = Integer.parseInt(parts[2]);
+            mHoleH = Integer.parseInt(parts[3]);
+        } catch (Throwable ignored) {
+            // A half-written file just means the previous rectangle stands.
+        }
+    }
+
     /** Set the Cacio managed-screen / bitmap size before this view is constructed.
      *  Must be called before setContentView (i.e. before the JVM is launched too,
      *  since cacio.managed.screensize is propagated as a -D JVM arg from these). */
@@ -126,11 +165,13 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
                 // False means RuneLite has not repainted. Nothing is posted and
                 // the TextureView keeps showing the previous frame, which is the
                 // correct visual and a large idle battery win.
+                if (SCENE_DRAWN_ELSEWHERE) refreshGameCanvasHole();
                 JREUtils.blitAWTScreenFrame(
                         AWT_CANVAS_WIDTH,
                         Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH),
                         Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT),
-                        !TRANSPARENT_BACKGROUND);
+                        !TRANSPARENT_BACKGROUND,
+                        mHoleX, mHoleY, mHoleW, mHoleH);
             }
         } catch (Throwable throwable) {
             Tools.showError(getContext(), throwable);

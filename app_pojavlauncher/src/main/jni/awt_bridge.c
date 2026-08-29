@@ -163,7 +163,8 @@ static int resolveGetRGB(void) {
  * the surface keeps showing the last frame.
  */
 JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreenFrame(
-        JNIEnv* env, jclass clazz, jint canvasWidth, jint visibleWidth, jint visibleHeight, jboolean opaque) {
+        JNIEnv* env, jclass clazz, jint canvasWidth, jint visibleWidth, jint visibleHeight, jboolean opaque,
+        jint holeX, jint holeY, jint holeW, jint holeH) {
     if (awtWindow == NULL) return JNI_FALSE;
     if (runtimeJNIEnvPtr_GRAPHICS == NULL) {
         if (runtimeJavaVMPtr == NULL) return JNI_FALSE;
@@ -250,20 +251,50 @@ JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreen
             }
         }
 #endif
+        /* The GPU plugin draws the game canvas into its own layer underneath,
+           and Cacio fills the same rectangle with opaque black. Copying that
+           would hide the scene completely — which is exactly what it did, for
+           a day and a half. Leave the rectangle fully transparent instead, and
+           skip the pixels entirely: it is most of the screen, so this is also
+           where most of the per-frame cost goes. */
+        int holeX0 = holeW > 0 ? holeX : 0, holeX1 = holeW > 0 ? holeX + holeW : 0;
+        int holeY0 = holeH > 0 ? holeY : 0, holeY1 = holeH > 0 ? holeY + holeH : 0;
+        if (holeX0 < 0) holeX0 = 0;
+        if (holeY0 < 0) holeY0 = 0;
+        if (holeX1 > w) holeX1 = w;
+        if (holeY1 > h) holeY1 = h;
+
+#ifdef BLIT_VECTOR
+#define BLIT_RANGE(s, d, from, to) do {                                        \
+            int x = (from);                                                    \
+            for (; x + 4 <= (to); x += 4) BLIT_SWIZZLE4((s) + x, (d) + x);     \
+            for (; x < (to); x++) {                                            \
+                uint32_t p = (s)[x];                                           \
+                (d)[x] = (p & 0xFF00FF00u) | ((p >> 16) & 0x000000FFu)         \
+                         | ((p & 0x000000FFu) << 16) | forceAlpha;             \
+            }                                                                  \
+        } while (0)
+#else
+#define BLIT_RANGE(s, d, from, to) do {                                        \
+            for (int x = (from); x < (to); x++) {                              \
+                uint32_t p = (s)[x];                                           \
+                (d)[x] = (p & 0xFF00FF00u) | ((p >> 16) & 0x000000FFu)         \
+                         | ((p & 0x000000FFu) << 16) | forceAlpha;             \
+            }                                                                  \
+        } while (0)
+#endif
         for (int y = 0; y < h; y++) {
             const uint32_t *s = (const uint32_t *) src + (size_t) y * (size_t) canvasWidth;
             uint32_t *d = (uint32_t *) buf.bits + (size_t) y * (size_t) buf.stride;
-            int x = 0;
-#ifdef BLIT_VECTOR
-            for (; x + 4 <= w; x += 4) {
-                BLIT_SWIZZLE4(s + x, d + x);
-            }
-#endif
-            for (; x < w; x++) {
-                uint32_t p = s[x];
-                d[x] = (p & 0xFF00FF00u) | ((p >> 16) & 0x000000FFu) | ((p & 0x000000FFu) << 16) | forceAlpha;
+            if (y >= holeY0 && y < holeY1 && holeX1 > holeX0) {
+                BLIT_RANGE(s, d, 0, holeX0);
+                memset(d + holeX0, 0, (size_t) (holeX1 - holeX0) * sizeof(uint32_t));
+                BLIT_RANGE(s, d, holeX1, w);
+            } else {
+                BLIT_RANGE(s, d, 0, w);
             }
         }
+#undef BLIT_RANGE
         (*runtimeJNIEnvPtr_GRAPHICS)->ReleasePrimitiveArrayCritical(runtimeJNIEnvPtr_GRAPHICS, jreRgbArray, src, JNI_ABORT);
         posted = JNI_TRUE;
     }

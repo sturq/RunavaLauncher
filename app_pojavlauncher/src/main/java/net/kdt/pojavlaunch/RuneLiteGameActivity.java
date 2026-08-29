@@ -209,6 +209,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             // software path paints every pixel itself and an opaque layer is
             // cheaper there.
             mCanvas.setOpaque(false);
+            AWTCanvasView.SCENE_DRAWN_ELSEWHERE = true;
             // A TextureView, not a SurfaceView, and for the reason AWTCanvasView
             // gives a few lines further down: a SurfaceView's surface belongs to
             // the compositor and is destroyed and recreated freely. It was being
