@@ -219,6 +219,13 @@ static int loadEgl(JNIEnv *env) {
 static void (*gl_getIntegerv)(unsigned int, int *) = NULL;
 static void (*gl_readPixels)(int, int, int, int, unsigned int, unsigned int, void *) = NULL;
 static void (*gl_bindFramebuffer)(unsigned int, unsigned int) = NULL;
+static void (*gl_scissor)(int, int, int, int) = NULL;
+static void (*gl_enable)(unsigned int) = NULL;
+static void (*gl_disable)(unsigned int) = NULL;
+static unsigned char (*gl_isEnabled)(unsigned int) = NULL;
+static void (*gl_clearColor)(float, float, float, float) = NULL;
+static void (*gl_clear)(unsigned int) = NULL;
+static void (*gl_getFloatv)(unsigned int, float *) = NULL;
 
 /* Ask through the same path LWJGL will use and report what comes back, one step
    at a time. Nothing resolved here is called: a bad pointer that is not null
@@ -251,6 +258,13 @@ static void reportWhatLwjglWillSee(void) {
     gl_getIntegerv     = getProc("glGetIntegerv");
     gl_readPixels      = getProc("glReadPixels");
     gl_bindFramebuffer = getProc("glBindFramebuffer");
+    gl_scissor         = getProc("glScissor");
+    gl_enable          = getProc("glEnable");
+    gl_disable         = getProc("glDisable");
+    gl_isEnabled       = getProc("glIsEnabled");
+    gl_clearColor      = getProc("glClearColor");
+    gl_clear           = getProc("glClear");
+    gl_getFloatv       = getProc("glGetFloatv");
 }
 
 /*
@@ -624,6 +638,27 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
             if (gy > 0) out += snprintf(out, sizeof(grid) - (out - grid), " /");
         }
         gl_bindFramebuffer(0x8CA8, (unsigned int) readFbo);
+    }
+
+    /* Spike, to be replaced by the real overlay: can anything be drawn over the
+       client's frame from here without disturbing it? If a marker shows in the
+       corner and the game keeps rendering, then compositing the AWT layer as a
+       texture in this same context is viable — and that removes the second
+       Android view, which is the thing that makes rotation fall apart. Scissor
+       and clear need no shaders and no vertex state, so this tests the hook
+       and nothing else. */
+    if (gl_scissor != NULL && gl_enable != NULL && gl_disable != NULL
+            && gl_clearColor != NULL && gl_clear != NULL && gl_isEnabled != NULL
+            && gl_getFloatv != NULL) {
+        unsigned char hadScissor = gl_isEnabled(0x0C11 /* GL_SCISSOR_TEST */);
+        float oldColor[4] = {0, 0, 0, 0};
+        gl_getFloatv(0x0C22 /* GL_COLOR_CLEAR_VALUE */, oldColor);
+        gl_enable(0x0C11);
+        gl_scissor(16, 16, 96, 96);
+        gl_clearColor(1.0f, 0.0f, 1.0f, 1.0f);
+        gl_clear(0x00004000 /* GL_COLOR_BUFFER_BIT */);
+        gl_clearColor(oldColor[0], oldColor[1], oldColor[2], oldColor[3]);
+        if (!hadScissor) gl_disable(0x0C11);
     }
 
     EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
