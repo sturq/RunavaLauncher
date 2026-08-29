@@ -156,7 +156,8 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         getWindowManager().getDefaultDisplay().getRealMetrics(dm);
         int longerEdge = Math.max(dm.widthPixels, dm.heightPixels);
         int shorterEdge = Math.min(dm.widthPixels, dm.heightPixels);
-        int canvasDim = SceneGeometry.cacioSquare(longerEdge, shorterEdge);
+        int canvasDim = gpuModeEnabled() ? SceneGeometry.even(longerEdge)
+                : SceneGeometry.cacioSquare(longerEdge, shorterEdge);
         Log.i("RuneLiteGame", "cacio canvas " + canvasDim + " for display "
                 + dm.widthPixels + "x" + dm.heightPixels);
         AWTCanvasView.setManagedScreenSize(canvasDim, canvasDim);
@@ -210,10 +211,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             // cheaper there.
             mCanvas.setOpaque(false);
             AWTCanvasView.SCENE_DRAWN_ELSEWHERE = true;
-            AWTCanvasView.setGameCanvasListener((x, y, w, h) -> mUiHandler.post(() -> {
-                mCanvasX = x; mCanvasY = y; mCanvasW = w; mCanvasH = h;
-                alignSceneToCanvas(0, 0);
-            }));
             // A TextureView, not a SurfaceView, and for the reason AWTCanvasView
             // gives a few lines further down: a SurfaceView's surface belongs to
             // the compositor and is destroyed and recreated freely. It was being
@@ -225,8 +222,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture available " + w + "x" + h);
-                    sizeSceneBuffer(t, w, h);
-                    alignSceneToCanvas(w, h);
                     JREUtils.setupBridgeWindow(new android.view.Surface(t));
                     mSceneSurfaceReady.countDown();
                 }
@@ -234,8 +229,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture resized to " + w + "x" + h);
-                    sizeSceneBuffer(t, w, h);
-                    alignSceneToCanvas(w, h);
                 }
 
                 @Override
@@ -545,53 +538,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
      *  This matters for more than looks: input is mapped in client
      *  coordinates, so a scene drawn somewhere else means every tap lands
      *  where the button is not. */
-    private int mSceneViewW, mSceneViewH;
-    private int mCanvasX, mCanvasY, mCanvasW, mCanvasH;
-
-    /** Give the scene buffer the AWT canvas's dimensions, exactly as
-     *  AWTCanvasView does for the software layer, and let the compositor scale
-     *  it to the view. Both layers then get their scaling from the same place
-     *  and cannot drift apart — which is what a rotation kept doing while the
-     *  scale lived in a matrix here and the buffer geometry lived elsewhere. */
-    private static void sizeSceneBuffer(android.graphics.SurfaceTexture t, int viewW, int viewH) {
-        if (viewW <= 0 || viewH <= 0) return;
-        int square = AWTCanvasView.AWT_CANVAS_WIDTH;
-        t.setDefaultBufferSize(SceneGeometry.visibleWidth(square, viewW, viewH),
-                               SceneGeometry.visibleHeight(square, viewW, viewH));
-    }
-
-    /** All that is left for the transform: OpenGL renders at its drawable's own
-     *  origin, the bottom left, while RuneLite may have placed the canvas
-     *  anywhere on the Cacio screen. So this is a translation and nothing else.
-     *  No scale factor to get out of step with the buffer. */
-    private void alignSceneToCanvas(int viewWidth, int viewHeight) {
-        if (viewWidth > 0 && viewHeight > 0) {
-            mSceneViewW = viewWidth;
-            mSceneViewH = viewHeight;
-        }
-        if (mSceneViewW <= 0 || mSceneViewH <= 0 || mCanvasW <= 0 || mCanvasH <= 0) return;
-
-        int square = AWTCanvasView.AWT_CANVAS_WIDTH;
-        int visibleW = SceneGeometry.visibleWidth(square, mSceneViewW, mSceneViewH);
-        int visibleH = SceneGeometry.visibleHeight(square, mSceneViewW, mSceneViewH);
-        if (mCanvasX + mCanvasW > visibleW || mCanvasY + mCanvasH > visibleH) {
-            gpuLog("canvas " + mCanvasW + "x" + mCanvasH + " at " + mCanvasX + "," + mCanvasY
-                    + " does not fit " + visibleW + "x" + visibleH + " yet, keeping the last placement");
-            return;
-        }
-
-        // setTransform works in view units, and the buffer is mapped onto the
-        // view, so buffer offsets are scaled by the same ratio on the way out.
-        float toView = (float) mSceneViewW / visibleW;
-        android.graphics.Matrix m = new android.graphics.Matrix();
-        m.setTranslate(mCanvasX * toView, (mCanvasY - (visibleH - mCanvasH)) * toView);
-        mGlSurface.setTransform(m);
-
-        gpuLog("scene " + mCanvasW + "x" + mCanvasH + " at " + mCanvasX + "," + mCanvasY
-                + " in buffer " + visibleW + "x" + visibleH + " for view "
-                + mSceneViewW + "x" + mSceneViewH);
-    }
-
     private boolean gpuModeEnabled() {
         return new File(getExternalFilesDir(null), "gpu").exists();
     }
