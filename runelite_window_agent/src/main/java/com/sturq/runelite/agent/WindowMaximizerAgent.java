@@ -415,6 +415,13 @@ public class WindowMaximizerAgent {
             // Frame.getFrames() returns only Frames (Dialog extends Window directly,
             // not Frame), so popups (FatalErrorDialog etc.) are never in this array.
             if (!f.isVisible()) continue;
+            // Only the window that holds the game. RuneLite's loader puts up a
+            // small 'RuneLite Launcher' frame during startup, and this used to
+            // stretch that to full screen on every rotation — which is the
+            // loading box that covered the menu button, and the JVM stopped
+            // dead in the middle of plugin loading right after doing it
+            // repeatedly. Nothing here has any business resizing it.
+            if (findGameCanvas(f) == null) continue;
             try {
                 int curW = f.getWidth();
                 int curH = f.getHeight();
