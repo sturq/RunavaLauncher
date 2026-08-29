@@ -34,19 +34,16 @@ public final class SceneGeometry {
      * Side of the square Cacio managed screen. Square so both orientations fit
      * without restarting the JVM.
      *
-     * GPU mode takes the whole longer edge, because RuneLite's GPU plugin sizes
-     * its final blit as canvas x GraphicsConfiguration.getDefaultTransform() and
-     * Caciocavallo's transform is fixed at 1:1 — so a canvas smaller than the
-     * drawable puts the scene in a corner and leaves the rest black.
-     *
-     * The software path caps at 60% instead, since there every pixel is
-     * rasterised on the CPU, but never below what keeps the shorter visible side
-     * above RuneLite's minimum.
+     * Capped at 60% of the longer edge, never below what keeps the shorter
+     * visible side above RuneLite's minimum. Both renderers use this: fewer,
+     * larger pixels scaled up to the screen make the interface readable on a
+     * phone, and cost both the client and the per-frame copy proportionally
+     * less. Drawing at the display's own resolution instead is sharper and
+     * leaves the HUD too small to use.
      */
-    public static int cacioSquare(int longEdge, int shortEdge, boolean gpuMode) {
+    public static int cacioSquare(int longEdge, int shortEdge) {
         int minForRuneLite = RUNELITE_MIN_WIDTH * longEdge / Math.max(1, shortEdge);
-        int square = gpuMode ? longEdge : Math.max((longEdge * 3) / 5, minForRuneLite);
-        return even(square);
+        return even(Math.max((longEdge * 3) / 5, minForRuneLite));
     }
 
     /** Visible width of that square for a view of the given size. */

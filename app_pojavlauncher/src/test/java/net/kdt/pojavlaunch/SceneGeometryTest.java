@@ -19,8 +19,8 @@ public class SceneGeometryTest {
 
     @Test
     public void everyEdgeIsEven() {
-        for (boolean gpu : new boolean[]{false, true}) {
-            int square = SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT, gpu);
+        {
+            int square = SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT);
             assertEven("square", square);
             // Both orientations: the view is the screen either way round.
             assertEven("portrait width",
@@ -35,17 +35,21 @@ public class SceneGeometryTest {
     }
 
     /**
-     * In GPU mode the visible region has to be the screen itself. Anything
-     * smaller and RuneLite blits fewer pixels than the drawable holds, which
-     * reads on screen as a renderer that does not work.
+     * Both renderers draw smaller than the screen and are scaled up. That is
+     * what makes the interface readable on a phone, and it is why the two
+     * layers need the same factor: the AWT layer gets it from its own smaller
+     * buffer, the scene layer from a composite transform.
      */
     @Test
-    public void gpuModeDrawsAtScreenSize() {
-        int square = SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT, true);
-        assertEquals(PIXEL_SHORT, SceneGeometry.visibleWidth(square, PIXEL_SHORT, PIXEL_LONG));
-        assertEquals(PIXEL_LONG, SceneGeometry.visibleHeight(square, PIXEL_SHORT, PIXEL_LONG));
-        assertEquals(PIXEL_LONG, SceneGeometry.visibleWidth(square, PIXEL_LONG, PIXEL_SHORT));
-        assertEquals(PIXEL_SHORT, SceneGeometry.visibleHeight(square, PIXEL_LONG, PIXEL_SHORT));
+    public void everythingIsScaledUp() {
+        int square = SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT);
+        int visW = SceneGeometry.visibleWidth(square, PIXEL_SHORT, PIXEL_LONG);
+        int visH = SceneGeometry.visibleHeight(square, PIXEL_SHORT, PIXEL_LONG);
+        assertTrue("visible region " + visW + "x" + visH + " is not smaller than the screen",
+                visW < PIXEL_SHORT && visH <= PIXEL_LONG);
+        double sx = (double) PIXEL_SHORT / visW, sy = (double) PIXEL_LONG / visH;
+        assertTrue("the two axes scale differently: " + sx + " vs " + sy,
+                Math.abs(sx - sy) < 0.02);
     }
 
     /**
@@ -55,7 +59,7 @@ public class SceneGeometryTest {
      */
     @Test
     public void softwareModeStaysAboveRuneLitesFloor() {
-        int square = SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT, false);
+        int square = SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT);
         int shortSide = Math.min(
                 SceneGeometry.visibleWidth(square, PIXEL_SHORT, PIXEL_LONG),
                 SceneGeometry.visibleHeight(square, PIXEL_LONG, PIXEL_SHORT));
@@ -68,7 +72,7 @@ public class SceneGeometryTest {
     /** The visible region keeps the view's shape, or the picture is stretched. */
     @Test
     public void aspectSurvives() {
-        int square = SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT, false);
+        int square = SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT);
         double view = (double) PIXEL_SHORT / PIXEL_LONG;
         double visible = (double) SceneGeometry.visibleWidth(square, PIXEL_SHORT, PIXEL_LONG)
                 / SceneGeometry.visibleHeight(square, PIXEL_SHORT, PIXEL_LONG);
@@ -79,7 +83,7 @@ public class SceneGeometryTest {
     /** A view that has not been measured yet must not produce a zero edge. */
     @Test
     public void unmeasuredViewIsSurvivable() {
-        int square = SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT, true);
+        int square = SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT);
         assertTrue(SceneGeometry.visibleWidth(square, 0, 0) >= 2);
         assertTrue(SceneGeometry.visibleHeight(square, 0, 0) >= 2);
         assertEquals(2, SceneGeometry.even(1));

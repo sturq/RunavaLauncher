@@ -156,7 +156,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         getWindowManager().getDefaultDisplay().getRealMetrics(dm);
         int longerEdge = Math.max(dm.widthPixels, dm.heightPixels);
         int shorterEdge = Math.min(dm.widthPixels, dm.heightPixels);
-        int canvasDim = SceneGeometry.cacioSquare(longerEdge, shorterEdge, gpuModeEnabled());
+        int canvasDim = SceneGeometry.cacioSquare(longerEdge, shorterEdge);
         Log.i("RuneLiteGame", "cacio canvas " + canvasDim + " for display "
                 + dm.widthPixels + "x" + dm.heightPixels);
         AWTCanvasView.setManagedScreenSize(canvasDim, canvasDim);
@@ -221,6 +221,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture available " + w + "x" + h);
+                    alignSceneToCanvas(w, h);
                     JREUtils.setupBridgeWindow(new android.view.Surface(t));
                     mSceneSurfaceReady.countDown();
                 }
@@ -228,6 +229,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture resized to " + w + "x" + h);
+                    alignSceneToCanvas(w, h);
                 }
 
                 @Override
@@ -517,6 +519,33 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
     /** GPU mode is opt-in while it is being brought up, so a broken experiment
      *  cannot take the working software path with it. Toggled by creating or
      *  deleting "gpu" in the app's external files directory. */
+    /** Scale the scene layer by the same factor the AWT layer gets for free.
+     *
+     *  Both draw at the Cacio canvas's size, smaller than the screen, and are
+     *  scaled up — that is what keeps the interface readable on a phone and
+     *  costs proportionally less everywhere. AWTCanvasView gets the scaling
+     *  from having a smaller buffer; the scene layer cannot, because this is
+     *  the kopper build of zink and it presents nothing at all when the
+     *  drawable is smaller than its window. So its drawable stays at the view's
+     *  size and the composite transform does the scaling instead, where it is
+     *  free.
+     *
+     *  Anchored at the top left, measured rather than reasoned: on a frame
+     *  where the client was visible its content began at y=7 of 2244, where a
+     *  bottom anchor would have put it at 84. Getting that wrong pushes the
+     *  scene off the top edge and looks exactly like a dead renderer. */
+    private void alignSceneToCanvas(int viewWidth, int viewHeight) {
+        if (viewWidth <= 0 || viewHeight <= 0) return;
+        int square = AWTCanvasView.AWT_CANVAS_WIDTH;
+        int visibleW = SceneGeometry.visibleWidth(square, viewWidth, viewHeight);
+        int visibleH = SceneGeometry.visibleHeight(square, viewWidth, viewHeight);
+        android.graphics.Matrix m = new android.graphics.Matrix();
+        m.setScale((float) viewWidth / visibleW, (float) viewHeight / visibleH);
+        mGlSurface.setTransform(m);
+        gpuLog("scene scaled from " + visibleW + "x" + visibleH
+                + " to " + viewWidth + "x" + viewHeight);
+    }
+
     private boolean gpuModeEnabled() {
         return new File(getExternalFilesDir(null), "gpu").exists();
     }
