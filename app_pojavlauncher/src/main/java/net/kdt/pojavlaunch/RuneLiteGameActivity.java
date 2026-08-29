@@ -156,25 +156,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         getWindowManager().getDefaultDisplay().getRealMetrics(dm);
         int longerEdge = Math.max(dm.widthPixels, dm.heightPixels);
         int shorterEdge = Math.min(dm.widthPixels, dm.heightPixels);
-        int minCanvasForRuneLite = 800 * longerEdge / Math.max(1, shorterEdge);
-        // GPU mode takes the longer edge whole, so the visible region is exactly
-        // the screen and the client draws in real device pixels.
-        //
-        // This is not a preference, it is what RuneLite's GPU plugin requires.
-        // Its final blit is sized canvas x GraphicsConfiguration.getDefaultTransform(),
-        // the HiDPI factor, and Caciocavallo's configuration is fixed at 1:1 —
-        // it reads cacio.managed.screensize and nothing else. So the client
-        // blits exactly canvas-many pixels into the drawable, and any canvas
-        // smaller than the drawable leaves the scene in a corner with the rest
-        // black. Scaling it back up afterwards was tried and is the wrong shape
-        // of fix: at 1:1 the client is already rendering at full resolution,
-        // which is sharper than the software path's upscale, not blurrier.
-        //
-        // The 60% cap stays on the software path, where the AWT blit rasterises
-        // every pixel on the CPU and is what that cap protects.
-        int canvasDim = gpuModeEnabled()
-                ? longerEdge
-                : Math.max((longerEdge * 3) / 5, minCanvasForRuneLite);
+        int canvasDim = SceneGeometry.cacioSquare(longerEdge, shorterEdge, gpuModeEnabled());
         Log.i("RuneLiteGame", "cacio canvas " + canvasDim + " for display "
                 + dm.widthPixels + "x" + dm.heightPixels);
         AWTCanvasView.setManagedScreenSize(canvasDim, canvasDim);

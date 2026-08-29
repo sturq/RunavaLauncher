@@ -212,4 +212,8 @@ dependencies {
 
     implementation "net.java.dev.jna:jna:5.13.0@aar"
 
+    // For SceneGeometryTest, which runs on the build machine. The sizing
+    // arithmetic it covers has been the single largest source of wasted
+    // debugging rounds, and none of it needs a device.
+    testImplementation 'junit:junit:4.13.2'
 }
