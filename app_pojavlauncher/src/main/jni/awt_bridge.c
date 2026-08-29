@@ -317,9 +317,10 @@ JNIEXPORT jboolean JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_blitAWTScreen
     if (window >= 5000000000ULL) {
         unsigned long p = blitStats.posted ? blitStats.posted : 1;
         __android_log_print(ANDROID_LOG_INFO, "awtblit",
-                "%dx%d: %lu posted, %lu skipped in %llums — fetch %llu us, "
+                "%dx%d hole %d,%d %dx%d: %lu posted, %lu skipped in %llums — fetch %llu us, "
                 "lock %llu us, pin %llu us, copy %llu us, %llu posted/s",
-                visibleWidth, visibleHeight, blitStats.posted, blitStats.skipped,
+                visibleWidth, visibleHeight, holeX, holeY, holeW, holeH,
+                blitStats.posted, blitStats.skipped,
                 window / 1000000ULL,
                 blitStats.fetchNanos / (p * 1000ULL),
                 blitStats.lockNanos / (p * 1000ULL),
