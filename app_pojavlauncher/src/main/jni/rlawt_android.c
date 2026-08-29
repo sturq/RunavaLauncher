@@ -553,12 +553,26 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
         gl_getIntegerv(0x8CAA /* GL_READ_FRAMEBUFFER_BINDING */, &readFbo);
     }
 
-    /* Does the window itself hold anything? glReadPixels takes its source from
-       whatever framebuffer is bound, and the client leaves its own bound — so
-       several earlier "the frame is black" readings were looks into RuneLite's
-       scene buffer rather than at the window. */
+    /* The geometry above is free to read. A readback is not: glReadPixels
+       stalls until the GPU catches up, and doing it every frame is a real cost
+       — it made the game feel slower, which is a poor trade for a diagnostic.
+       Only look when the geometry changed, which is the moment of interest,
+       and once in a while so a steady state is still checked. */
+    static long swaps = 0;
+    char geometry[160];
+    snprintf(geometry, sizeof(geometry),
+             "window %dx%d surface %dx%d viewport %d,%d %dx%d fbo %d",
+             windowW, windowH, surfaceW, surfaceH,
+             viewport[0], viewport[1], viewport[2], viewport[3], readFbo);
+    int geometryChanged = strcmp(geometry, ctx->lastState) != 0;
+    int sampleNow = geometryChanged || (swaps % 600) == 0;
+    swaps++;
+
+    /* glReadPixels takes its source from whatever framebuffer is bound, and the
+       client leaves its own bound — so several earlier "the frame is black"
+       readings were looks into RuneLite's scene buffer rather than the window. */
     int lit = -1;
-    if (gl_readPixels != NULL && gl_bindFramebuffer != NULL
+    if (sampleNow && gl_readPixels != NULL && gl_bindFramebuffer != NULL
             && viewport[2] > 0 && viewport[3] > 0) {
         gl_bindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, 0);
         unsigned char px[8 * 8 * 4];
@@ -574,21 +588,13 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
 
     EGLBoolean ok = egl.swapBuffers(ctx->dpy, ctx->surface);
 
-    /* Brightness is deliberately not part of the comparison: the login screen
-       animates, so including it made every single frame count as a change and
-       buried the transitions this is for. Whether the window is lit at all is
-       the interesting part, so it is bucketed to dark or lit. */
-    char state[192];
-    snprintf(state, sizeof(state),
-             "window %dx%d surface %dx%d viewport %d,%d %dx%d fbo %d ok %d window %s",
-             windowW, windowH, surfaceW, surfaceH,
-             viewport[0], viewport[1], viewport[2], viewport[3],
-             readFbo, (int) ok, lit < 0 ? "unread" : (lit < 8 ? "DARK" : "lit"));
-    if (strcmp(state, ctx->lastState) != 0) {
-        snprintf(ctx->lastState, sizeof(ctx->lastState), "%s", state);
-        char withValue[224];
-        snprintf(withValue, sizeof(withValue), "%s (brightest %d)", state, lit);
-        rlawtNote(withValue);
+    if (sampleNow) {
+        snprintf(ctx->lastState, sizeof(ctx->lastState), "%s", geometry);
+        char msg[224];
+        snprintf(msg, sizeof(msg), "%s ok %d window %s (brightest %d)",
+                 geometry, (int) ok,
+                 lit < 0 ? "unread" : (lit < 8 ? "DARK" : "lit"), lit);
+        rlawtNote(msg);
     }
 }
 
