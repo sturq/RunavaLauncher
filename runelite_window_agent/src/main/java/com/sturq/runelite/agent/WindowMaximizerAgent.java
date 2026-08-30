@@ -433,17 +433,37 @@ public class WindowMaximizerAgent {
                 // sometimes drift the size by a couple of px and we don't
                 // want to start a resize-fight that flashes the UI every
                 // sweep tick.
-                if (Math.abs(curW - targetW) > 4 || Math.abs(curH - targetH) > 4
-                        || curX != 0 || curY != 0) {
-                    f.setLocation(0, 0);
-                    f.setSize(targetW, targetH);
+                // Size the frame's *content* to the target, not the frame, and
+                // hang the decoration off the edges of the screen.
+                //
+                // Sizing the frame itself left the title bar and the bottom
+                // border inside the visible area, where they are black bars
+                // above and below the game: 24 rows and 60 rows of a 2244-row
+                // screen. Nothing in this project reads Frame.getInsets(), no
+                // coordinate maths depends on the decoration, and the only
+                // control it offers is a close button that quits RuneLite, so
+                // there is nothing to keep.
+                //
+                // Placing it rather than calling setUndecorated, because that
+                // needs the frame non-displayable and so a dispose() - and the
+                // canvas hanging off this frame is the one the GPU plugin holds
+                // an EGL surface against.
+                java.awt.Insets in = f.getInsets();
+                int wantX = -in.left;
+                int wantY = -in.top;
+                int wantW = targetW + in.left + in.right;
+                int wantH = targetH + in.top + in.bottom;
+                if (Math.abs(curW - wantW) > 4 || Math.abs(curH - wantH) > 4
+                        || curX != wantX || curY != wantY) {
                     // Don't MAXIMIZED_BOTH - that snaps the frame to Cacio's
-                    // full screen size and undoes our orientation-fit. Just
-                    // a plain setSize is what we want.
+                    // full screen size and undoes our orientation-fit.
+                    f.setBounds(wantX, wantY, wantW, wantH);
                     f.validate();
                     System.out.println("[WindowMaximizerAgent] resize '" + f.getTitle()
                             + "' " + curW + "x" + curH + " @ " + curX + "," + curY
-                            + " -> " + targetW + "x" + targetH + " @ 0,0");
+                            + " -> " + wantW + "x" + wantH + " @ " + wantX + "," + wantY
+                            + " (insets " + in.top + "," + in.left + "," + in.bottom + "," + in.right
+                            + " content " + targetW + "x" + targetH + ")");
                 }
             } catch (Throwable t) {
                 System.out.println("[WindowMaximizerAgent] resize failed: " + t);
