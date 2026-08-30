@@ -509,8 +509,22 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
        covered and half was not — which is what "half the image loads late"
        looks like.
        This is the same instant the scene geometry changes, and the offset is
-       RuneLite's own, handed to configureInsets and ignored until now. */
+       RuneLite's own, handed to configureInsets and ignored until now.
+
+       The rectangle is read as Android coordinates, which count rows from the
+       top, but the viewport counts them from the bottom, so only the size was
+       ever right. Measured: a 1008x2160 viewport in a 1008x2244 window puts the
+       scene on rows 84 to 2244 while the hole was cut on rows 0 to 2160. The
+       two overlap over most of their height, which is why the picture looked
+       broadly correct, but the 84 rows at each end do not: the top strip is
+       hole with no scene behind it, and the bottom strip is scene with the AWT
+       layer's black painted over it. That is the black bar above and below the
+       game. This only moves the hole; input maps through the visible region and
+       is not touched. */
     if (geometryChanged && viewport[2] > 0 && viewport[3] > 0) {
+        int holeX = viewport[0] + ctx->insetX;
+        int holeY = windowH - viewport[1] - viewport[3] + ctx->insetY;
+        if (holeY < 0) holeY = 0;
         const char *dir = getenv("RUNAVA_RLAWT_LOG");
         if (dir != NULL) {
             char path[512];
@@ -520,7 +534,7 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
                 snprintf(slash + 1, sizeof(path) - (slash + 1 - path), ".runelitedroid_canvas");
                 FILE *f = fopen(path, "w");
                 if (f != NULL) {
-                    fprintf(f, "%d %d %d %d", ctx->insetX, ctx->insetY, viewport[2], viewport[3]);
+                    fprintf(f, "%d %d %d %d", holeX, holeY, viewport[2], viewport[3]);
                     fclose(f);
                 }
             }
