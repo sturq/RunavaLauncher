@@ -364,10 +364,33 @@ public class WindowMaximizerAgent {
     }
 
 
+    /** Log where AWT actually has the game canvas, as "x y w h".
+     *
+     *  Diagnostic only: nothing reads it. The launcher derives the scene
+     *  rectangle from the GL viewport, which says where OpenGL draws, and
+     *  OpenGL draws at its drawable's own origin. Whether that is also where
+     *  AWT put the canvas has been assumed all along and never checked, and it
+     *  is the one number that would show the two disagreeing. */
+    private static void logGameCanvasBounds() {
+        try {
+            for (Frame f : Frame.getFrames()) {
+                if (f == null || !f.isVisible() || !f.isShowing()) continue;
+                Component canvas = findGameCanvas(f);
+                if (canvas == null || !canvas.isShowing()) continue;
+                java.awt.Point p = canvas.getLocationOnScreen();
+                String line = p.x + " " + p.y + " " + canvas.getWidth() + " " + canvas.getHeight();
+                if (line.equals(sLastCanvasBounds)) return;
+                sLastCanvasBounds = line;
+                System.out.println("[WindowMaximizerAgent] awt canvas at " + line
+                        + " in frame " + f.getWidth() + "x" + f.getHeight());
+                return;
+            }
+        } catch (Throwable ignored) {}
+    }
+    private static String sLastCanvasBounds = "";
+
     private static void sweep() {
-        // The canvas rectangle now comes from rlawt, which sees it change in
-        // the same frame the scene does. Reporting it from here as well meant
-        // two writers to one file and a rectangle that lagged a rotation.
+        logGameCanvasBounds();
         Frame[] frames = Frame.getFrames();
         if (frames.length == 0) return;
         int targetW = sTargetW;
