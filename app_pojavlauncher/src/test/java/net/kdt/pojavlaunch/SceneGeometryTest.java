@@ -93,4 +93,31 @@ public class SceneGeometryTest {
     private static void assertEven(String what, int value) {
         assertTrue(what + " is odd: " + value, value % 2 == 0);
     }
+
+    /** A portrait view taller than the client's canvas cap must come back inside
+     *  it, with both edges scaled together so the aspect still matches the view.
+     *  Left uncapped, the canvas stops at 2160 inside a 2244-row window and the
+     *  scene is drawn 84 rows low - the black bar and the click offset. */
+    @Test
+    public void visibleRegionStaysInsideTheClientCanvasCap() {
+        int square = SceneGeometry.even(2244);
+        int w = SceneGeometry.visibleWidth(square, 1008, 2244);
+        int h = SceneGeometry.visibleHeight(square, 1008, 2244);
+        assertTrue("height must not exceed the cap, was " + h,
+                h <= SceneGeometry.CLIENT_MAX_CANVAS_HEIGHT);
+        assertEquals("height should sit at the cap", 2160, h);
+        double viewAspect = 1008.0 / 2244.0;
+        double gotAspect = (double) w / (double) h;
+        assertTrue("aspect " + gotAspect + " should match the view's " + viewAspect,
+                Math.abs(gotAspect - viewAspect) < 0.01);
+    }
+
+    /** Landscape is already inside the cap and must not be touched: the canvas
+     *  filled a 983-row content area exactly when measured. */
+    @Test
+    public void landscapeIsLeftAlone() {
+        int square = SceneGeometry.even(2244);
+        assertEquals(2244, SceneGeometry.visibleWidth(square, 2244, 1008));
+        assertEquals(1008, SceneGeometry.visibleHeight(square, 2244, 1008));
+    }
 }

@@ -46,10 +46,27 @@ public final class SceneGeometry {
         return even(Math.max((longEdge * 3) / 5, minForRuneLite));
     }
 
+    /**
+     * The tallest canvas the game will accept. Measured, not looked up: given a
+     * content area 983 rows high the canvas came out 983 and filled it, and given
+     * one 2219 rows high it came out 2160 and did not. Filling in one case and
+     * stopping at a round number in the other is a cap, not a subtraction.
+     *
+     * It matters because OpenGL anchors its viewport at the bottom of the window
+     * while the canvas hangs from the top. A canvas shorter than the window is
+     * therefore a scene drawn that much too low: on a 2244-row screen, 2244 - 2160
+     * = 84 rows, which is the black bar above the game and the click that lands
+     * below the finger. Keeping the drawing surface inside the cap removes both,
+     * because then the canvas fills it and there is no gap to misalign.
+     */
+    public static final int CLIENT_MAX_CANVAS_HEIGHT = 2160;
+
     /** Visible width of that square for a view of the given size. */
     public static int visibleWidth(int square, int viewWidth, int viewHeight) {
         if (viewWidth <= 0 || viewHeight <= 0) return even(square);
         int w = viewWidth >= viewHeight ? square : square * viewWidth / viewHeight;
+        int h = viewWidth >= viewHeight ? square * viewHeight / viewWidth : square;
+        if (h > CLIENT_MAX_CANVAS_HEIGHT) w = w * CLIENT_MAX_CANVAS_HEIGHT / h;
         return even(w);
     }
 
@@ -57,6 +74,10 @@ public final class SceneGeometry {
     public static int visibleHeight(int square, int viewWidth, int viewHeight) {
         if (viewWidth <= 0 || viewHeight <= 0) return even(square);
         int h = viewWidth >= viewHeight ? square * viewHeight / viewWidth : square;
+        // Both edges come down together so the aspect still matches the view and
+        // the surface scales up to it without stretching, which is the same thing
+        // the software renderer does to keep its cost down.
+        if (h > CLIENT_MAX_CANVAS_HEIGHT) h = CLIENT_MAX_CANVAS_HEIGHT;
         return even(h);
     }
 }
