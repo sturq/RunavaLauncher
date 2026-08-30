@@ -363,19 +363,14 @@ public class WindowMaximizerAgent {
         javax.swing.SwingUtilities.invokeLater(WindowMaximizerAgent::sweep);
     }
 
-
-    /** Where AWT has the game canvas, as "x y w h" on the Cacio screen.
+    /** Where the game canvas sits on the Cacio screen, as "x y w h".
      *
-     *  The launcher puts the GL layer exactly here. OpenGL always draws at its
-     *  drawable's own origin, so the drawable has to be the canvas: given the
-     *  whole window instead, the picture sits flush against the window's bottom
-     *  edge wherever AWT actually placed the canvas.
-     *
-     *  That is what was wrong. The rectangle used to be derived from the GL
-     *  viewport as {@code windowHeight - viewportHeight}, which put it at row 84
-     *  while AWT had the canvas at row 24, so the picture was drawn 60 rows
-     *  below where every click was interpreted. The derivation only looks
-     *  correct while the canvas happens to reach the bottom of the frame.
+     *  With the GPU plugin on, that rectangle is drawn by OpenGL into a
+     *  separate layer underneath, and Cacio fills the same area with opaque
+     *  black — which covers the scene completely. The launcher needs the
+     *  rectangle so it can leave a transparent hole there instead of copying
+     *  black over the top. It is also most of the screen, so not copying it is
+     *  the bulk of the per-frame cost gone.
      *
      *  A file rather than a return value because this runs inside the game JVM
      *  and the reader is Android-side, which is how the existing input IPC
@@ -396,8 +391,7 @@ public class WindowMaximizerAgent {
                 try (java.io.FileWriter w = new java.io.FileWriter(out, false)) {
                     w.write(line);
                 }
-                System.out.println("[WindowMaximizerAgent] awt canvas at " + line
-                        + " in frame " + f.getWidth() + "x" + f.getHeight());
+                System.out.println("[WindowMaximizerAgent] game canvas at " + line);
                 return;
             }
         } catch (Throwable ignored) {}
@@ -405,7 +399,9 @@ public class WindowMaximizerAgent {
     private static String sLastCanvasBounds = "";
 
     private static void sweep() {
-        reportGameCanvasBounds();
+        // The canvas rectangle now comes from rlawt, which sees it change in
+        // the same frame the scene does. Reporting it from here as well meant
+        // two writers to one file and a rectangle that lagged a rotation.
         Frame[] frames = Frame.getFrames();
         if (frames.length == 0) return;
         int targetW = sTargetW;

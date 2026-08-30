@@ -211,25 +211,6 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             // cheaper there.
             mCanvas.setOpaque(false);
             AWTCanvasView.SCENE_DRAWN_ELSEWHERE = true;
-            // Lay the scene layer over exactly the canvas AWT reports. OpenGL
-            // draws at its drawable's own origin, so the drawable has to be the
-            // canvas; given the whole window it drew flush against the bottom
-            // edge, 60 rows below where AWT had the canvas and therefore 60 rows
-            // below where every click was interpreted. Cacio's coordinates are
-            // the view's pixels here, since GPU mode sizes the managed screen to
-            // the display and the visible region to the view.
-            AWTCanvasView.setGameCanvasListener((x, y, w, h) -> runOnUiThread(() -> {
-                if (mGlSurface == null || w <= 0 || h <= 0) return;
-                android.view.ViewGroup.MarginLayoutParams lp =
-                        (android.view.ViewGroup.MarginLayoutParams) mGlSurface.getLayoutParams();
-                if (lp.leftMargin == x && lp.topMargin == y
-                        && lp.width == w && lp.height == h) return;
-                lp.leftMargin = x;
-                lp.topMargin = y;
-                lp.width = w;
-                lp.height = h;
-                mGlSurface.setLayoutParams(lp);
-            }));
             // A TextureView, not a SurfaceView, and for the reason AWTCanvasView
             // gives a few lines further down: a SurfaceView's surface belongs to
             // the compositor and is destroyed and recreated freely. It was being

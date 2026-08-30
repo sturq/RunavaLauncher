@@ -34,11 +34,9 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
      *  per-frame copy, since the canvas is most of the screen. */
     public static boolean SCENE_DRAWN_ELSEWHERE = false;
 
-
-    /** Fired when AWT moves or resizes the game canvas. The scene layer has to
-     *  be laid out over exactly that rectangle: OpenGL draws at its drawable's
-     *  own origin, so unless the drawable is the canvas, the picture ends up
-     *  flush against the window's bottom edge instead of where AWT put it. */
+    /** Fired when the game canvas moves or resizes on the Cacio screen. The
+     *  scene layer has to follow it: OpenGL always draws at its drawable's own
+     *  origin, wherever RuneLite happens to have placed the canvas. */
     public interface GameCanvasListener {
         void onGameCanvasMoved(int x, int y, int width, int height);
     }
@@ -127,19 +125,6 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         setSurfaceTextureListener(this);
 
         post(this::refreshSize);
-    }
-
-    /** Rotation used to be picked up from the activity's onConfigurationChanged,
-     *  which fires when the configuration changes and not when the new size has
-     *  landed: the parent still measured the old orientation, so refreshSize
-     *  computed the previous geometry, latched it and never looked again. The
-     *  frame then stayed portrait-shaped inside a landscape window and the
-     *  TextureView stretched it, which is the distorted band on turning.
-     *  This fires once the size is real, so there is nothing to time. */
-    @Override
-    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-        super.onSizeChanged(w, h, oldw, oldh);
-        refreshSize();
     }
 
     @Override
@@ -271,13 +256,9 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         // current orientation, and the visible-region aspect matches them
         // too, so the buffer scales 1:1 with no bars or stretch.
         ViewGroup.LayoutParams layoutParams = getLayoutParams();
-        // Only when it actually differs: setLayoutParams requests a layout, and
-        // laying out unconditionally from onSizeChanged would loop.
-        if (layoutParams.width != pw || layoutParams.height != ph) {
-            layoutParams.width = pw;
-            layoutParams.height = ph;
-            setLayoutParams(layoutParams);
-        }
+        layoutParams.width = pw;
+        layoutParams.height = ph;
+        setLayoutParams(layoutParams);
     }
 
 }

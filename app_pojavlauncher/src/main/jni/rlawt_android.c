@@ -501,13 +501,31 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
              viewport[0], viewport[1], viewport[2], viewport[3], readFbo);
     int geometryChanged = strcmp(geometry, ctx->lastState) != 0;
 
-    /* The scene rectangle is not derived here any more. It used to be
-       computed as windowH - viewportH, which is only where AWT put the canvas
-       when the canvas happens to reach the bottom of the frame. Measured, it
-       did not: AWT had the canvas at row 24 while this arithmetic said 84, so
-       the picture was drawn 60 rows below where clicks were interpreted, and
-       at the login screen the same arithmetic was out by 1657. The agent reads
-       the rectangle off the canvas component itself and writes it instead. */
+    /* Publish where the scene is, from inside the render path.
+       The launcher cuts a transparent hole in the software layer so this scene
+       shows through, and it used to get the rectangle from the JVM-side agent,
+       which polls. On a rotation the two moved at different times: for a
+       moment the hole sat where the canvas used to be, so half the picture was
+       covered and half was not — which is what "half the image loads late"
+       looks like.
+       This is the same instant the scene geometry changes, and the offset is
+       RuneLite's own, handed to configureInsets and ignored until now. */
+    if (geometryChanged && viewport[2] > 0 && viewport[3] > 0) {
+        const char *dir = getenv("RUNAVA_RLAWT_LOG");
+        if (dir != NULL) {
+            char path[512];
+            snprintf(path, sizeof(path), "%s", dir);
+            char *slash = strrchr(path, '/');
+            if (slash != NULL) {
+                snprintf(slash + 1, sizeof(path) - (slash + 1 - path), ".runelitedroid_canvas");
+                FILE *f = fopen(path, "w");
+                if (f != NULL) {
+                    fprintf(f, "%d %d %d %d", ctx->insetX, ctx->insetY, viewport[2], viewport[3]);
+                    fclose(f);
+                }
+            }
+        }
+    }
     int sampleNow = geometryChanged || (swaps % 600) == 0;
     swaps++;
 
@@ -520,49 +538,25 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
        glReadPixels takes its source from whatever framebuffer is bound, and
        the client leaves its own bound, so several earlier "the frame is black"
        readings were looks into RuneLite's scene buffer rather than the window. */
-    /* Where the picture actually is, as a bounding box over the whole window.
-       Everything logged until now described the space the client was given -
-       window, surface, viewport - and those have all agreed with each other for
-       a while now while the picture was still wrong. The one thing never
-       measured is where the lit pixels ended up, and OSRS in fixed mode paints
-       only 765x503 somewhere inside a viewport many times that size, so the
-       viewport says nothing about it.
-
-       Sixteen full-width rows rather than a grid of small reads: glReadPixels
-       synchronises, so the cost is in the number of calls, not the pixels.
-       Reported in Android's coordinates so it can be compared against the hole
-       rectangle directly. */
     char grid[64] = "";
     if (sampleNow && gl_readPixels != NULL && gl_bindFramebuffer != NULL
-            && windowW > 16 && windowW <= 4096 && windowH > 16) {
-        static unsigned char row[4096 * 4];
+            && viewport[2] > 16 && viewport[3] > 16) {
         gl_bindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, 0);
-        int x0 = windowW, x1 = -1, yTop = -1, yBottom = -1;
-        for (int i = 0; i < 16; i++) {
-            int y = (windowH - 1) * i / 15;
-            memset(row, 0, (size_t) windowW * 4);
-            gl_readPixels(0, y, windowW, 1, 0x1908 /* GL_RGBA */,
-                          0x1401 /* GL_UNSIGNED_BYTE */, row);
-            int first = -1, last = -1;
-            for (int x = 0; x < windowW; x++) {
-                const unsigned char *p = row + x * 4;
-                if (p[0] > 24 || p[1] > 24 || p[2] > 24) {
-                    if (first < 0) first = x;
-                    last = x;
+        char *out = grid;
+        for (int gy = 2; gy >= 0; gy--) {
+            for (int gx = 0; gx < 3; gx++) {
+                unsigned char px[8 * 8 * 4];
+                memset(px, 0, sizeof(px));
+                gl_readPixels(viewport[0] + (viewport[2] - 8) * gx / 2,
+                              viewport[1] + (viewport[3] - 8) * gy / 2,
+                              8, 8, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, px);
+                int brightest = 0;
+                for (unsigned i = 0; i < sizeof(px); i++) {
+                    if ((i % 4) != 3 && px[i] > brightest) brightest = px[i];
                 }
+                out += snprintf(out, sizeof(grid) - (out - grid), "%3d", brightest);
             }
-            if (first < 0) continue;
-            if (first < x0) x0 = first;
-            if (last > x1) x1 = last;
-            int androidY = windowH - 1 - y;
-            if (yTop < 0 || androidY < yTop) yTop = androidY;
-            if (androidY > yBottom) yBottom = androidY;
-        }
-        if (x1 >= 0) {
-            snprintf(grid, sizeof(grid), "%d,%d %dx%d",
-                     x0, yTop, x1 - x0 + 1, yBottom - yTop + 1);
-        } else {
-            snprintf(grid, sizeof(grid), "nothing lit");
+            if (gy > 0) out += snprintf(out, sizeof(grid) - (out - grid), " /");
         }
         gl_bindFramebuffer(0x8CA8, (unsigned int) readFbo);
     }
@@ -589,7 +583,7 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     if (sampleNow) {
         snprintf(ctx->lastState, sizeof(ctx->lastState), "%s", geometry);
         char msg[256];
-        snprintf(msg, sizeof(msg), "%s ok %d, content %s",
+        snprintf(msg, sizeof(msg), "%s ok %d, window top to bottom:%s",
                  geometry, (int) ok, grid[0] ? grid : " unread");
         rlawtNote(msg);
     }
