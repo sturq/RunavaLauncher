@@ -127,6 +127,27 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         post(this::refreshSize);
     }
 
+    /** Rotation used to be picked up from the activity's onConfigurationChanged,
+     *  which fires when the configuration changes and not when the new size has
+     *  landed: the parent still measured the old orientation, so refreshSize
+     *  computed the previous geometry, latched it and never looked again. This
+     *  fires once the size is real, so there is nothing to time. (Re-applied:
+     *  this fix was correct the first time and went down with the wholesale
+     *  revert of 2026-08-31.) */
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        refreshSize();
+    }
+
+    /** Runs on the UI thread every time an AWT frame is composited, at least
+     *  ~2.5 Hz (the agent's repaint nudger) and 60 Hz in play. GPU mode hangs
+     *  its scene-buffer check on it: the check is level-triggered there rather
+     *  than edge-triggered here, so a write that raced a rotation and lost is
+     *  corrected on the next frame instead of latching until the next turn. */
+    private static volatile Runnable sFrameTick;
+    public static void setFrameTick(Runnable r) { sFrameTick = r; }
+
     @Override
     public void onSurfaceTextureAvailable(SurfaceTexture texture, int w, int h) {
         getSurfaceTexture().setDefaultBufferSize(
@@ -161,6 +182,8 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
 
     @Override
     public void onSurfaceTextureUpdated(SurfaceTexture texture) {
+        Runnable tick = sFrameTick;
+        if (tick != null) tick.run();
         getSurfaceTexture().setDefaultBufferSize(
                 Math.min(AWT_VISIBLE_WIDTH, AWT_CANVAS_WIDTH),
                 Math.min(AWT_VISIBLE_HEIGHT, AWT_CANVAS_HEIGHT));
@@ -256,9 +279,13 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
         // current orientation, and the visible-region aspect matches them
         // too, so the buffer scales 1:1 with no bars or stretch.
         ViewGroup.LayoutParams layoutParams = getLayoutParams();
-        layoutParams.width = pw;
-        layoutParams.height = ph;
-        setLayoutParams(layoutParams);
+        // Only when it actually differs: setLayoutParams requests a layout, and
+        // laying out unconditionally from onSizeChanged would loop.
+        if (layoutParams.width != pw || layoutParams.height != ph) {
+            layoutParams.width = pw;
+            layoutParams.height = ph;
+            setLayoutParams(layoutParams);
+        }
     }
 
 }

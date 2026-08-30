@@ -224,6 +224,12 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             // cheaper there.
             mCanvas.setOpaque(false);
             AWTCanvasView.SCENE_DRAWN_ELSEWHERE = true;
+            // Re-check the scene buffer against the visible region on every
+            // composited AWT frame. The check is a comparison and returns
+            // immediately when nothing changed; what it buys is convergence,
+            // since any write that raced a rotation is corrected on the next
+            // frame rather than latching.
+            AWTCanvasView.setFrameTick(this::syncSceneBufferSize);
             // A TextureView, not a SurfaceView, and for the reason AWTCanvasView
             // gives a few lines further down: a SurfaceView's surface belongs to
             // the compositor and is destroyed and recreated freely. It was being
@@ -235,6 +241,8 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture available " + w + "x" + h);
+                    mSceneBufW = 0;
+                    mSceneBufH = 0;
                     syncSceneBufferSize();
                     JREUtils.setupBridgeWindow(new android.view.Surface(t));
                     mSceneSurfaceReady.countDown();
@@ -242,12 +250,12 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
 
                 @Override
                 public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
+                    // Log only. This fires when the VIEW resizes, which is
+                    // precisely the moment the visible region has not been
+                    // recomputed yet, so a sync from here always wrote the old
+                    // orientation's size - it was one half of the race. The
+                    // frame tick re-checks within the next composited frame.
                     gpuLog("scene texture resized to " + w + "x" + h);
-                    // Same rendering size as the AWT layer, never the view's own
-                    // w/h: the view size put the GL layer in its own coordinate
-                    // space, which was the click offset and the black bars. See
-                    // the visible-region listener above.
-                    syncSceneBufferSize();
                 }
 
                 @Override
@@ -521,6 +529,8 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
      *  passes zeroes to ANativeWindow_setBuffersGeometry, meaning "follow the
      *  window", and for a SurfaceTexture the window is this default buffer
      *  size, so the value set here is the one EGL sees. */
+    private int mSceneBufW, mSceneBufH;
+
     private void syncSceneBufferSize() {
         if (mGlSurface == null) return;
         android.graphics.SurfaceTexture t = mGlSurface.getSurfaceTexture();
@@ -528,6 +538,15 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         int w = Math.min(AWTCanvasView.AWT_VISIBLE_WIDTH, AWTCanvasView.AWT_CANVAS_WIDTH);
         int h = Math.min(AWTCanvasView.AWT_VISIBLE_HEIGHT, AWTCanvasView.AWT_CANVAS_HEIGHT);
         if (w <= 0 || h <= 0) return;
+        // Level-triggered: this also runs on every composited AWT frame (the
+        // frame tick), so it must be a comparison first and a write only on
+        // change. The edge-triggered version had two writers racing a rotation,
+        // and a stale value that landed last latched until the next turn -
+        // logged as two opposite writes inside one second. Here a lost race is
+        // corrected on the next frame instead.
+        if (w == mSceneBufW && h == mSceneBufH) return;
+        mSceneBufW = w;
+        mSceneBufH = h;
         gpuLog("scene buffer -> " + w + "x" + h);
         t.setDefaultBufferSize(w, h);
     }
