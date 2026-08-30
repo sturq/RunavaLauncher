@@ -538,17 +538,19 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         int w = Math.min(AWTCanvasView.AWT_VISIBLE_WIDTH, AWTCanvasView.AWT_CANVAS_WIDTH);
         int h = Math.min(AWTCanvasView.AWT_VISIBLE_HEIGHT, AWTCanvasView.AWT_CANVAS_HEIGHT);
         if (w <= 0 || h <= 0) return;
-        // Level-triggered: this also runs on every composited AWT frame (the
-        // frame tick), so it must be a comparison first and a write only on
-        // change. The edge-triggered version had two writers racing a rotation,
-        // and a stale value that landed last latched until the next turn -
-        // logged as two opposite writes inside one second. Here a lost race is
-        // corrected on the next frame instead.
+        // Written on every tick, unconditionally. TextureView resets the
+        // buffer size to its own view size internally whenever the view is
+        // resized, so a comparison against what WE last wrote skips the
+        // re-assert exactly when the framework has stomped the value - which
+        // was the squashed half-height scene surviving five seconds past a
+        // correct sync. AWTCanvasView has re-asserted its own buffer every
+        // frame for the same reason all along; this layer gets the same
+        // treatment. The cache below only gates the log line.
+        t.setDefaultBufferSize(w, h);
         if (w == mSceneBufW && h == mSceneBufH) return;
         mSceneBufW = w;
         mSceneBufH = h;
         gpuLog("scene buffer -> " + w + "x" + h);
-        t.setDefaultBufferSize(w, h);
     }
 
     /** Released once the scene surface exists. The GPU plugin asks rlawt for a
