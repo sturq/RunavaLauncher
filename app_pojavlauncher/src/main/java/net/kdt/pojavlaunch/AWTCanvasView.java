@@ -35,6 +35,16 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
     public static boolean SCENE_DRAWN_ELSEWHERE = false;
 
 
+    /** Fired when AWT moves or resizes the game canvas. The scene layer has to
+     *  be laid out over exactly that rectangle: OpenGL draws at its drawable's
+     *  own origin, so unless the drawable is the canvas, the picture ends up
+     *  flush against the window's bottom edge instead of where AWT put it. */
+    public interface GameCanvasListener {
+        void onGameCanvasMoved(int x, int y, int width, int height);
+    }
+    private static GameCanvasListener sCanvasListener;
+    public static void setGameCanvasListener(GameCanvasListener l) { sCanvasListener = l; }
+
     private int mHoleX, mHoleY, mHoleW, mHoleH;
     private long mHoleReadAtMs;
     private java.io.File mHoleFile;
@@ -85,7 +95,10 @@ public class AWTCanvasView extends TextureView implements TextureView.SurfaceTex
             if (parts.length != 4) return;
             int x = Integer.parseInt(parts[0]), y = Integer.parseInt(parts[1]);
             int w = Integer.parseInt(parts[2]), h = Integer.parseInt(parts[3]);
+            if (x == mHoleX && y == mHoleY && w == mHoleW && h == mHoleH) return;
             mHoleX = x; mHoleY = y; mHoleW = w; mHoleH = h;
+            GameCanvasListener l = sCanvasListener;
+            if (l != null) l.onGameCanvasMoved(x, y, w, h);
         } catch (Throwable ignored) {
             // A half-written file just means the previous rectangle stands.
         }

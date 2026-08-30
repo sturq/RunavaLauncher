@@ -501,61 +501,13 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
              viewport[0], viewport[1], viewport[2], viewport[3], readFbo);
     int geometryChanged = strcmp(geometry, ctx->lastState) != 0;
 
-    /* Publish where the scene is, from inside the render path.
-       The launcher cuts a transparent hole in the software layer so this scene
-       shows through, and it used to get the rectangle from the JVM-side agent,
-       which polls. On a rotation the two moved at different times: for a
-       moment the hole sat where the canvas used to be, so half the picture was
-       covered and half was not — which is what "half the image loads late"
-       looks like.
-       This is the same instant the scene geometry changes, and the offset is
-       RuneLite's own, handed to configureInsets and ignored until now.
-
-       The rectangle is written in Android's coordinates, which count rows from
-       the top, while the viewport counts them from the bottom. Publishing the
-       viewport's own origin put the hole at the top of the screen while the
-       scene was drawn at the bottom: at the login screen that is a 765x503
-       viewport in a 1008x2244 window, so the two were 1741 rows apart and the
-       AWT layer covered the scene with the black Cacio paints there. It looked
-       like the renderer failing intermittently because the two only coincide
-       when the viewport is about as tall as the window, which is true once
-       RuneLite's canvas has grown and false on the login screen. */
-    /* windowH and the viewport are two different generations of one rotation
-       for a few frames: Android resizes the window, the agent resizes the
-       frame, RuneLite lays out its canvas and the client sets a new viewport,
-       each on its own frame. Mixing them yields a rectangle that belongs to
-       neither. Measured while turning: a landscape viewport against the
-       portrait window height put the hole at row 1261 of 1008, and the reverse
-       came out at -1152 and was clamped to 0. That is the black band and the
-       offset picture.
-       A viewport that does not fit inside the window proves the two are from
-       different generations, so keep the previous rectangle - stale, but
-       self-consistent - until they agree. The pending flag is needed because
-       the write is otherwise driven by the geometry changing, and the frame
-       where the two finally agree need not be one where it does. */
-    static int holePending = 0;
-    int holeX = viewport[0] + ctx->insetX;
-    int holeY = windowH - viewport[1] - viewport[3] + ctx->insetY;
-    int holeFits = holeY >= 0 && viewport[0] + viewport[2] <= windowW
-                   && viewport[2] > 0 && viewport[3] > 0;
-    if (geometryChanged) holePending = 1;
-    if (holePending && holeFits) {
-        holePending = 0;
-        const char *dir = getenv("RUNAVA_RLAWT_LOG");
-        if (dir != NULL) {
-            char path[512];
-            snprintf(path, sizeof(path), "%s", dir);
-            char *slash = strrchr(path, '/');
-            if (slash != NULL) {
-                snprintf(slash + 1, sizeof(path) - (slash + 1 - path), ".runelitedroid_canvas");
-                FILE *f = fopen(path, "w");
-                if (f != NULL) {
-                    fprintf(f, "%d %d %d %d", holeX, holeY, viewport[2], viewport[3]);
-                    fclose(f);
-                }
-            }
-        }
-    }
+    /* The scene rectangle is not derived here any more. It used to be
+       computed as windowH - viewportH, which is only where AWT put the canvas
+       when the canvas happens to reach the bottom of the frame. Measured, it
+       did not: AWT had the canvas at row 24 while this arithmetic said 84, so
+       the picture was drawn 60 rows below where clicks were interpreted, and
+       at the login screen the same arithmetic was out by 1657. The agent reads
+       the rectangle off the canvas component itself and writes it instead. */
     int sampleNow = geometryChanged || (swaps % 600) == 0;
     swaps++;
 

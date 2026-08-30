@@ -364,14 +364,25 @@ public class WindowMaximizerAgent {
     }
 
 
-    /** Log where AWT actually has the game canvas, as "x y w h".
+    /** Where AWT has the game canvas, as "x y w h" on the Cacio screen.
      *
-     *  Diagnostic only: nothing reads it. The launcher derives the scene
-     *  rectangle from the GL viewport, which says where OpenGL draws, and
-     *  OpenGL draws at its drawable's own origin. Whether that is also where
-     *  AWT put the canvas has been assumed all along and never checked, and it
-     *  is the one number that would show the two disagreeing. */
-    private static void logGameCanvasBounds() {
+     *  The launcher puts the GL layer exactly here. OpenGL always draws at its
+     *  drawable's own origin, so the drawable has to be the canvas: given the
+     *  whole window instead, the picture sits flush against the window's bottom
+     *  edge wherever AWT actually placed the canvas.
+     *
+     *  That is what was wrong. The rectangle used to be derived from the GL
+     *  viewport as {@code windowHeight - viewportHeight}, which put it at row 84
+     *  while AWT had the canvas at row 24, so the picture was drawn 60 rows
+     *  below where every click was interpreted. The derivation only looks
+     *  correct while the canvas happens to reach the bottom of the frame.
+     *
+     *  A file rather than a return value because this runs inside the game JVM
+     *  and the reader is Android-side, which is how the existing input IPC
+     *  works too. */
+    private static void reportGameCanvasBounds() {
+        String home = System.getProperty("user.home");
+        if (home == null) return;
         try {
             for (Frame f : Frame.getFrames()) {
                 if (f == null || !f.isVisible() || !f.isShowing()) continue;
@@ -381,6 +392,10 @@ public class WindowMaximizerAgent {
                 String line = p.x + " " + p.y + " " + canvas.getWidth() + " " + canvas.getHeight();
                 if (line.equals(sLastCanvasBounds)) return;
                 sLastCanvasBounds = line;
+                java.io.File out = new java.io.File(home, ".runelitedroid_canvas");
+                try (java.io.FileWriter w = new java.io.FileWriter(out, false)) {
+                    w.write(line);
+                }
                 System.out.println("[WindowMaximizerAgent] awt canvas at " + line
                         + " in frame " + f.getWidth() + "x" + f.getHeight());
                 return;
@@ -390,7 +405,7 @@ public class WindowMaximizerAgent {
     private static String sLastCanvasBounds = "";
 
     private static void sweep() {
-        logGameCanvasBounds();
+        reportGameCanvasBounds();
         Frame[] frames = Frame.getFrames();
         if (frames.length == 0) return;
         int targetW = sTargetW;
