@@ -1043,6 +1043,11 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 List<String> argList = new ArrayList<>(Arrays.asList(javaArgs.split(" ")));
                 List<String> javaArgList = new ArrayList<>();
                 Tools.getCacioJavaArgs(javaArgList, runtime.javaVersion == 8, this);
+                // DEMO, likely temporary: double the Swing side (sidebar panels,
+                // quest lists) without touching the game canvas. Untested against
+                // Cacio, whose CTCGraphicsConfiguration is pinned at 1:1 - if
+                // that pin wins, this line changes nothing, which is the answer.
+                javaArgList.add("-Dsun.java2d.uiScale=2");
                 // -XX:TieredStopAtLevel=1 used to be set here, together with SerialGC,
                 // to stop the JVM faulting at libjvm.so+0xa14ca0 a few seconds into AWT
                 // activity. The guess at the time was a bad C2 optimisation or a GC
