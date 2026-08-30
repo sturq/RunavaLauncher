@@ -300,6 +300,45 @@ public class WindowMaximizerAgent {
      *  camera drag then go to that text field instead of the canvas, so the
      *  camera doesn't move. Activity sends FOCUSGAME at the start of each
      *  camera drag to put focus back on the game. */
+    /** Dump the frame's layout once, down to the game canvas.
+     *
+     *  The canvas comes out 84 rows shorter than the frame's content area, and
+     *  that difference is the whole problem: OpenGL anchors its viewport at the
+     *  bottom of the window while the canvas hangs from the top, so the scene
+     *  lands 84 rows below the canvas that interprets the clicks. If whatever
+     *  occupies those 84 rows can be removed, the offset goes to zero and the
+     *  scene, the interface and the touch coordinates all coincide with no
+     *  arithmetic anywhere. Worth knowing exactly what it is before building a
+     *  composite that has to work around it. */
+    private static boolean sDumpedLayout;
+    private static void dumpLayoutOnce(Frame f) {
+        if (sDumpedLayout) return;
+        Component canvas = findGameCanvas(f);
+        if (canvas == null) return;
+        sDumpedLayout = true;
+        java.awt.Insets in = f.getInsets();
+        System.out.println("[WindowMaximizerAgent] LAYOUT frame " + f.getWidth() + "x" + f.getHeight()
+                + " insets t" + in.top + " l" + in.left + " b" + in.bottom + " r" + in.right
+                + " content " + (f.getWidth() - in.left - in.right)
+                + "x" + (f.getHeight() - in.top - in.bottom));
+        dumpTree(f, 0, canvas);
+    }
+
+    private static void dumpTree(Container c, int depth, Component canvas) {
+        if (depth > 6) return;
+        for (Component child : c.getComponents()) {
+            StringBuilder pad = new StringBuilder();
+            for (int i = 0; i < depth; i++) pad.append("  ");
+            System.out.println("[WindowMaximizerAgent] LAYOUT " + pad
+                    + child.getClass().getName()
+                    + " " + child.getWidth() + "x" + child.getHeight()
+                    + " @" + child.getX() + "," + child.getY()
+                    + (child.isVisible() ? "" : " HIDDEN")
+                    + (child == canvas ? "   <-- game canvas" : ""));
+            if (child instanceof Container) dumpTree((Container) child, depth + 1, canvas);
+        }
+    }
+
     private static Component findGameCanvas(Container c) {
         for (Component child : c.getComponents()) {
             if (!child.isVisible()) continue;
@@ -424,6 +463,7 @@ public class WindowMaximizerAgent {
             // dead in the middle of plugin loading right after doing it
             // repeatedly. Nothing here has any business resizing it.
             if (findGameCanvas(f) == null) continue;
+            dumpLayoutOnce(f);
             try {
                 int curW = f.getWidth();
                 int curH = f.getHeight();
