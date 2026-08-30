@@ -463,11 +463,63 @@ Java_net_runelite_rlawt_AWTContext_detachCurrent(JNIEnv *env, jobject self) {
     egl.makeCurrent(ctx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 }
 
+/* Tear the EGL surface down and build it again against the same window.
+ *
+ * Needed because this stack presents through a Vulkan swapchain (zink/kopper),
+ * and a swapchain's size is fixed when it is created. When the window changes
+ * size on a rotation, the swapchain keeps producing buffers at the old size and
+ * overrides the window's default; eglQuerySurface is no help because Mesa
+ * answers it from the window, so the log said the surface had followed while
+ * the real swapchain had not. The visible result of trusting it: a landscape
+ * viewport rendered into a still-portrait swapchain, clipped to its width,
+ * anchored at its bottom, and stretched across the view - the scene squashed
+ * into the bottom 1008/2160ths of the screen. Only a fresh surface gets a
+ * fresh swapchain, so that is what a size change costs.
+ *
+ * The size the surface was built for is recorded only after everything
+ * succeeded. Recording it before knowing was this morning's latched failure:
+ * the retry sat behind a test that already claimed the work was done. */
+static int rebuildSurfaceFor(AndroidAWTContext *ctx, int windowW, int windowH) {
+    egl.makeCurrent(ctx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    if (ctx->surface != EGL_NO_SURFACE && egl.destroySurface != NULL) {
+        egl.destroySurface(ctx->dpy, ctx->surface);
+    }
+    ctx->surface = EGL_NO_SURFACE;
+    ANativeWindow_setBuffersGeometry(ctx->window, 0, 0, 0);
+    EGLSurface fresh = egl.createWindowSurface(ctx->dpy, ctx->config,
+                                               (EGLNativeWindowType) ctx->window, NULL);
+    if (fresh == EGL_NO_SURFACE) {
+        rlawtNote("surface rebuild: create failed, retrying next frame");
+        return 0;
+    }
+    if (!egl.makeCurrent(ctx->dpy, fresh, fresh, ctx->context)) {
+        rlawtNote("surface rebuild: makeCurrent failed, retrying next frame");
+        egl.destroySurface(ctx->dpy, fresh);
+        return 0;
+    }
+    ctx->surface = fresh;
+    ctx->builtForWidth = windowW;
+    ctx->builtForHeight = windowH;
+    char msg[96];
+    snprintf(msg, sizeof(msg), "window now %dx%d, rebuilt surface for it", windowW, windowH);
+    rlawtNote(msg);
+    return 1;
+}
+
 JNIEXPORT void JNICALL
 Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
     AndroidAWTContext *ctx = ctxOf(env, self);
     if (ctx == NULL || ctx->dpy == NULL) return;
-    if (ctx->surface == EGL_NO_SURFACE) return;
+    if (ctx->surface == EGL_NO_SURFACE) {
+        /* A previous rebuild failed part-way. Keep trying: returning without a
+           retry is how this shape of code latched its failure last time. */
+        if (ctx->window != NULL) {
+            int w = ANativeWindow_getWidth(ctx->window);
+            int h = ANativeWindow_getHeight(ctx->window);
+            if (w > 0 && h > 0) rebuildSurfaceFor(ctx, w, h);
+        }
+        if (ctx->surface == EGL_NO_SURFACE) return;
+    }
 
     /* Everything that decides whether a frame reaches the screen, measured in
        the one place that can see all of it. Eight rounds of rotation fixes were
@@ -592,6 +644,11 @@ Java_net_runelite_rlawt_AWTContext_swapBuffers(JNIEnv *env, jobject self) {
         } else {
             rlawtNote("surface was bad and would not come back");
         }
+    } else if (ok && windowW > 0 && windowH > 0
+               && (windowW != ctx->builtForWidth || windowH != ctx->builtForHeight)) {
+        /* After the swap, so the frame just rendered still reaches the screen;
+           the next one lands in a swapchain of the right size. */
+        rebuildSurfaceFor(ctx, windowW, windowH);
     }
 
     if (sampleNow) {
