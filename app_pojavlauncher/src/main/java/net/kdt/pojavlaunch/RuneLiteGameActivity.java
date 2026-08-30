@@ -166,8 +166,21 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
         // this listener for us to push the same numbers to the JVM-side
         // agent. The activity no longer guesses dimensions from
         // DisplayMetrics (which lagged the actual screen on rotation).
-        AWTCanvasView.setVisibleRegionListener((vw, vh) ->
-                writeInputRequest("RESIZE " + vw + " " + vh));
+        AWTCanvasView.setVisibleRegionListener((vw, vh) -> {
+            writeInputRequest("RESIZE " + vw + " " + vh);
+            // The scene layer renders at the same size the AWT layer does, and
+            // both are scaled up to the view together. The GL buffer used to be
+            // the raw view size instead: the one participant in its own
+            // coordinate space. Touch and the AWT layer already agreed - the
+            // touch map view->visible-region is the exact inverse of the AWT
+            // layer's visible-region->view scaling - so every click on AWT UI
+            // landed, while the scene sat unscaled at the window's bottom-left
+            // and everything in the game world appeared up to 84 rows above and
+            // 38 columns right of where a tap on it was interpreted. The black
+            // bars at the edges were the uncovered remainder of the same
+            // mismatch.
+            syncSceneBufferSize();
+        });
         AWTCanvasView.TRANSPARENT_BACKGROUND = true;
         setContentView(R.layout.activity_runelite_game);
 
@@ -222,6 +235,7 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture available " + w + "x" + h);
+                    syncSceneBufferSize();
                     JREUtils.setupBridgeWindow(new android.view.Surface(t));
                     mSceneSurfaceReady.countDown();
                 }
@@ -229,17 +243,11 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 @Override
                 public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) {
                     gpuLog("scene texture resized to " + w + "x" + h);
-                    // The client draws correctly into a correctly sized surface
-                    // after a rotation — rlawt reports window and surface both
-                    // turned, and its readback of the window comes back lit.
-                    // What is wrong is the display: the scene appears squeezed
-                    // to 44% of the width, and 1008/2244 is 0.449, so the buffer
-                    // being composited still carries the old orientation.
-                    //
-                    // AWTCanvasView has always set this on its own layer for the
-                    // same reason. This is the view's own size, not the shrink
-                    // that kopper will not present.
-                    t.setDefaultBufferSize(w, h);
+                    // Same rendering size as the AWT layer, never the view's own
+                    // w/h: the view size put the GL layer in its own coordinate
+                    // space, which was the click offset and the black bars. See
+                    // the visible-region listener above.
+                    syncSceneBufferSize();
                 }
 
                 @Override
@@ -505,6 +513,23 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
             Log.w("RuneLiteGame", "could not unpack the LWJGL natives", t);
             return null;
         }
+    }
+
+    /** Give the scene layer the same buffer size the AWT layer renders at, so
+     *  the TextureView scales both to the view identically and the touch map -
+     *  which is the exact inverse of that scaling - is right for both. rlawt
+     *  passes zeroes to ANativeWindow_setBuffersGeometry, meaning "follow the
+     *  window", and for a SurfaceTexture the window is this default buffer
+     *  size, so the value set here is the one EGL sees. */
+    private void syncSceneBufferSize() {
+        if (mGlSurface == null) return;
+        android.graphics.SurfaceTexture t = mGlSurface.getSurfaceTexture();
+        if (t == null) return;
+        int w = Math.min(AWTCanvasView.AWT_VISIBLE_WIDTH, AWTCanvasView.AWT_CANVAS_WIDTH);
+        int h = Math.min(AWTCanvasView.AWT_VISIBLE_HEIGHT, AWTCanvasView.AWT_CANVAS_HEIGHT);
+        if (w <= 0 || h <= 0) return;
+        gpuLog("scene buffer -> " + w + "x" + h);
+        t.setDefaultBufferSize(w, h);
     }
 
     /** Released once the scene surface exists. The GPU plugin asks rlawt for a
