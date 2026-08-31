@@ -61,11 +61,44 @@ public final class SceneGeometry {
      */
     public static final int CLIENT_MAX_CANVAS_HEIGHT = 2160;
 
+    /**
+     * How much smaller than the view the surfaces render. Everything on screen
+     * comes out larger by the inverse - game, interface and sidebar together,
+     * because both layers are scaled up to the view by the same factor and
+     * touch maps through the same numbers. One mechanism, no stacking with the
+     * stretched-mode plugin.
+     *
+     * Bounded below by what the client will lay out, so the effective factor
+     * stops at whichever floor is hit first: about 1.26x in portrait, where
+     * the width floor binds, and 2x in landscape, where the height floor does,
+     * on a 1008x2244 screen.
+     */
+    public static final float RENDER_SCALE = 0.5f;
+
+    /**
+     * The client will not lay its window out shorter than the fixed-mode
+     * canvas plus a row of chrome; forcing less starts the same pack() fight
+     * the width floor exists for.
+     */
+    public static final int RUNELITE_MIN_HEIGHT = 504;
+
+    /** The factor actually applied: the requested scale, pushed back up until
+     *  both of the client's layout floors are respected, and never above 1. */
+    private static float effectiveScale(int fullW, int fullH) {
+        float s = RENDER_SCALE;
+        if (fullW > 0 && s * fullW < RUNELITE_MIN_WIDTH) s = RUNELITE_MIN_WIDTH / (float) fullW;
+        if (fullH > 0 && s * fullH < RUNELITE_MIN_HEIGHT) s = RUNELITE_MIN_HEIGHT / (float) fullH;
+        return s > 1f ? 1f : s;
+    }
+
     /** Visible width of that square for a view of the given size. */
     public static int visibleWidth(int square, int viewWidth, int viewHeight) {
         if (viewWidth <= 0 || viewHeight <= 0) return even(square);
         int w = viewWidth >= viewHeight ? square : square * viewWidth / viewHeight;
         int h = viewWidth >= viewHeight ? square * viewHeight / viewWidth : square;
+        float s = effectiveScale(w, h);
+        w = (int) (w * s + 0.5f);
+        h = (int) (h * s + 0.5f);
         if (h > CLIENT_MAX_CANVAS_HEIGHT) w = w * CLIENT_MAX_CANVAS_HEIGHT / h;
         return even(w);
     }
@@ -73,10 +106,12 @@ public final class SceneGeometry {
     /** Visible height of that square for a view of the given size. */
     public static int visibleHeight(int square, int viewWidth, int viewHeight) {
         if (viewWidth <= 0 || viewHeight <= 0) return even(square);
+        int w = viewWidth >= viewHeight ? square : square * viewWidth / viewHeight;
         int h = viewWidth >= viewHeight ? square * viewHeight / viewWidth : square;
-        // Both edges come down together so the aspect still matches the view and
-        // the surface scales up to it without stretching, which is the same thing
-        // the software renderer does to keep its cost down.
+        // Both edges move together so the aspect still matches the view and
+        // the surface scales up to it without stretching.
+        float s = effectiveScale(w, h);
+        h = (int) (h * s + 0.5f);
         if (h > CLIENT_MAX_CANVAS_HEIGHT) h = CLIENT_MAX_CANVAS_HEIGHT;
         return even(h);
     }

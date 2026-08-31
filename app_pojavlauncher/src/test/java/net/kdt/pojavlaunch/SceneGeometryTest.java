@@ -53,20 +53,30 @@ public class SceneGeometryTest {
     }
 
     /**
-     * The software path scales down for CPU cost, but never so far that
-     * RuneLite refuses the width — that is the resize war, hundreds of
-     * WindowMaximizerAgent lines per session.
+     * Scaling down is what makes everything readable, but never past what the
+     * client will lay out: narrower than the width floor or shorter than the
+     * height floor starts the resize war, hundreds of WindowMaximizerAgent
+     * lines per session.
      */
     @Test
-    public void softwareModeStaysAboveRuneLitesFloor() {
-        int square = SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT);
-        int shortSide = Math.min(
-                SceneGeometry.visibleWidth(square, PIXEL_SHORT, PIXEL_LONG),
-                SceneGeometry.visibleHeight(square, PIXEL_LONG, PIXEL_SHORT));
-        // Even-rounding may shave one pixel off the floor; that is fine, a
-        // whole window of slack is not.
-        assertTrue("shorter visible side " + shortSide + " is below RuneLite's floor",
-                shortSide >= SceneGeometry.RUNELITE_MIN_WIDTH - 2);
+    public void scaleStopsAtTheClientsLayoutFloors() {
+        for (int square : new int[]{
+                SceneGeometry.cacioSquare(PIXEL_LONG, PIXEL_SHORT),
+                SceneGeometry.even(PIXEL_LONG)}) {
+            // Even-rounding may shave a pixel; a whole window of slack may not.
+            assertTrue("portrait width below the floor",
+                    SceneGeometry.visibleWidth(square, PIXEL_SHORT, PIXEL_LONG)
+                            >= SceneGeometry.RUNELITE_MIN_WIDTH - 2);
+            assertTrue("landscape width below the floor",
+                    SceneGeometry.visibleWidth(square, PIXEL_LONG, PIXEL_SHORT)
+                            >= SceneGeometry.RUNELITE_MIN_WIDTH - 2);
+            assertTrue("portrait height below the floor",
+                    SceneGeometry.visibleHeight(square, PIXEL_SHORT, PIXEL_LONG)
+                            >= SceneGeometry.RUNELITE_MIN_HEIGHT - 2);
+            assertTrue("landscape height below the floor",
+                    SceneGeometry.visibleHeight(square, PIXEL_LONG, PIXEL_SHORT)
+                            >= SceneGeometry.RUNELITE_MIN_HEIGHT - 2);
+        }
     }
 
     /** The visible region keeps the view's shape, or the picture is stretched. */
@@ -94,30 +104,28 @@ public class SceneGeometryTest {
         assertTrue(what + " is odd: " + value, value % 2 == 0);
     }
 
-    /** A portrait view taller than the client's canvas cap must come back inside
-     *  it, with both edges scaled together so the aspect still matches the view.
-     *  Left uncapped, the canvas stops at 2160 inside a 2244-row window and the
-     *  scene is drawn 84 rows low - the black bar and the click offset. */
+    /** The visible region never exceeds the client's canvas cap, and the
+     *  render scale keeps both orientations comfortably inside it while the
+     *  aspect still matches the view. */
     @Test
     public void visibleRegionStaysInsideTheClientCanvasCap() {
-        int square = SceneGeometry.even(2244);
-        int w = SceneGeometry.visibleWidth(square, 1008, 2244);
-        int h = SceneGeometry.visibleHeight(square, 1008, 2244);
-        assertTrue("height must not exceed the cap, was " + h,
+        int square = SceneGeometry.even(PIXEL_LONG);
+        int w = SceneGeometry.visibleWidth(square, PIXEL_SHORT, PIXEL_LONG);
+        int h = SceneGeometry.visibleHeight(square, PIXEL_SHORT, PIXEL_LONG);
+        assertTrue("height exceeds the cap: " + h,
                 h <= SceneGeometry.CLIENT_MAX_CANVAS_HEIGHT);
-        assertEquals("height should sit at the cap", 2160, h);
-        double viewAspect = 1008.0 / 2244.0;
+        double viewAspect = (double) PIXEL_SHORT / PIXEL_LONG;
         double gotAspect = (double) w / (double) h;
         assertTrue("aspect " + gotAspect + " should match the view's " + viewAspect,
                 Math.abs(gotAspect - viewAspect) < 0.01);
     }
 
-    /** Landscape is already inside the cap and must not be touched: the canvas
-     *  filled a 983-row content area exactly when measured. */
+    /** Landscape has room to honour the requested scale in full: half-size
+     *  render, so everything on screen is twice as large. */
     @Test
-    public void landscapeIsLeftAlone() {
-        int square = SceneGeometry.even(2244);
-        assertEquals(2244, SceneGeometry.visibleWidth(square, 2244, 1008));
-        assertEquals(1008, SceneGeometry.visibleHeight(square, 2244, 1008));
+    public void landscapeHonoursTheRequestedScale() {
+        int square = SceneGeometry.even(PIXEL_LONG);
+        assertEquals(1122, SceneGeometry.visibleWidth(square, PIXEL_LONG, PIXEL_SHORT));
+        assertEquals(504, SceneGeometry.visibleHeight(square, PIXEL_LONG, PIXEL_SHORT));
     }
 }
