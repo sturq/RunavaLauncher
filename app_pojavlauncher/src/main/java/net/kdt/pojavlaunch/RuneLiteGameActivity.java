@@ -1050,7 +1050,14 @@ public class RuneLiteGameActivity extends BaseActivity implements View.OnTouchLi
                 // swallow sun.java2d.uiScale entirely, but it never sees this.
                 // The game canvas is untouched; the stretched-mode plugin
                 // handles that side.
+                // Without the second flag, FlatLaf ignores the first on modern
+                // JVMs: it assumes the Java2D pipeline scales for it, and ours
+                // is pinned at 1:1 by Cacio, so nothing happened - measured, the
+                // toolbar stayed exactly 31px. Forcing user scaling makes
+                // FlatLaf compute sizes and fonts itself, which is the only kind
+                // of scaling this pipeline can honour.
                 javaArgList.add("-Dflatlaf.uiScale=2");
+                javaArgList.add("-Dflatlaf.uiScale.enabled=true");
                 // -XX:TieredStopAtLevel=1 used to be set here, together with SerialGC,
                 // to stop the JVM faulting at libjvm.so+0xa14ca0 a few seconds into AWT
                 // activity. The guess at the time was a bad C2 optimisation or a GC
