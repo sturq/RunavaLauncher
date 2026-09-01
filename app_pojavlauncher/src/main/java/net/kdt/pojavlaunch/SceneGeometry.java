@@ -65,15 +65,21 @@ public final class SceneGeometry {
      * How much smaller than the view the surfaces render. Everything on screen
      * comes out larger by the inverse - game, interface and sidebar together,
      * because both layers are scaled up to the view by the same factor and
-     * touch maps through the same numbers. One mechanism, no stacking with the
-     * stretched-mode plugin.
+     * touch maps through the same numbers.
+     *
+     * At 1 it is inert and enlargement is delegated instead: the game canvas
+     * to RuneLite's stretched-mode plugin, which renders the game internally
+     * smaller and so is not stopped by the client's window floors (2.5x in
+     * portrait where this knob's ceiling is 1.26x), and the sidebar to
+     * FlatLaf's own scaling via -Dflatlaf.uiScale. Turning this back below 1
+     * works and scales uniformly, but stacks multiplicatively with the plugin,
+     * so pick one story or the other.
      *
      * Bounded below by what the client will lay out, so the effective factor
-     * stops at whichever floor is hit first: about 1.26x in portrait, where
-     * the width floor binds, and 2x in landscape, where the height floor does,
-     * on a 1008x2244 screen.
+     * stops at whichever floor is hit first: the width floor in portrait, the
+     * height floor in landscape.
      */
-    public static final float RENDER_SCALE = 0.5f;
+    public static final float RENDER_SCALE = 1.0f;
 
     /**
      * The client will not lay its window out shorter than the fixed-mode

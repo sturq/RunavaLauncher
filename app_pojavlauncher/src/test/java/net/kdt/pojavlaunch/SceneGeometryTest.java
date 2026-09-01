@@ -120,12 +120,16 @@ public class SceneGeometryTest {
                 Math.abs(gotAspect - viewAspect) < 0.01);
     }
 
-    /** Landscape has room to honour the requested scale in full: half-size
-     *  render, so everything on screen is twice as large. */
+    /** With the render scale inert at 1, GPU mode draws at native size and
+     *  enlargement is delegated: the game canvas to the stretched-mode plugin,
+     *  the sidebar to FlatLaf's uiScale. Pin the native numbers so turning the
+     *  knob back on is a deliberate act, not a drive-by. */
     @Test
-    public void landscapeHonoursTheRequestedScale() {
+    public void renderScaleIsInert() {
         int square = SceneGeometry.even(PIXEL_LONG);
-        assertEquals(1122, SceneGeometry.visibleWidth(square, PIXEL_LONG, PIXEL_SHORT));
-        assertEquals(504, SceneGeometry.visibleHeight(square, PIXEL_LONG, PIXEL_SHORT));
+        assertEquals(PIXEL_LONG, SceneGeometry.visibleWidth(square, PIXEL_LONG, PIXEL_SHORT));
+        assertEquals(PIXEL_SHORT, SceneGeometry.visibleHeight(square, PIXEL_LONG, PIXEL_SHORT));
+        assertEquals(SceneGeometry.CLIENT_MAX_CANVAS_HEIGHT,
+                SceneGeometry.visibleHeight(square, PIXEL_SHORT, PIXEL_LONG));
     }
 }
