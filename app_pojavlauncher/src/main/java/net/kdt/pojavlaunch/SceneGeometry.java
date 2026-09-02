@@ -67,19 +67,20 @@ public final class SceneGeometry {
      * because both layers are scaled up to the view by the same factor and
      * touch maps through the same numbers.
      *
-     * At 1 it is inert and enlargement is delegated instead: the game canvas
-     * to RuneLite's stretched-mode plugin, which renders the game internally
-     * smaller and so is not stopped by the client's window floors (2.5x in
-     * portrait where this knob's ceiling is 1.26x), and the sidebar to
-     * FlatLaf's own scaling via -Dflatlaf.uiScale. Turning this back below 1
-     * works and scales uniformly, but stacks multiplicatively with the plugin,
-     * so pick one story or the other.
+     * This is the whole enlargement story: one factor under both layers, so
+     * game, interface and sidebar grow together in either orientation, and
+     * touch stays exact because it maps through the same numbers. The
+     * stretched-mode plugin and FlatLaf scaling were both tried on top of this
+     * and both removed - the plugin could not reach the Swing sidebar and
+     * FlatLaf could not reach RuneLite's hardcoded sizes, and stacking them
+     * only made portrait's budget worse.
      *
      * Bounded below by what the client will lay out, so the effective factor
-     * stops at whichever floor is hit first: the width floor in portrait, the
-     * height floor in landscape.
+     * stops at whichever floor is hit first: about 1.26x in portrait, where
+     * the width floor binds, and 2x in landscape, where the height floor does,
+     * on a 1008x2244 screen.
      */
-    public static final float RENDER_SCALE = 1.0f;
+    public static final float RENDER_SCALE = 0.5f;
 
     /**
      * The client will not lay its window out shorter than the fixed-mode
