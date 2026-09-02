@@ -437,6 +437,46 @@ public class WindowMaximizerAgent {
     }
     private static String sLastCanvasBounds = "";
 
+    /** Double the sidebar's tab icons, which doubles the sidebar.
+     *
+     *  The bar's size is not reachable from the outside: its widths are raw
+     *  pixel constants in RuneLite's own code, so no look-and-feel scaling
+     *  touches them - flatlaf.uiScale was measured to change nothing, forced
+     *  or not. But this agent lives inside the JVM, and the bar is a
+     *  JTabbedPane whose tabs size themselves to their icons. Swap each icon
+     *  for a 2x copy and the tabs, the bar and the tap targets follow on
+     *  RuneLite's own layout pass.
+     *
+     *  Runs from the sweep, so tabs added later by plugins are caught on the
+     *  next tick. Idempotent by the size guard: a scaled icon is wider than
+     *  ICON_SCALE_BELOW and is left alone. */
+    private static final int ICON_SCALE_BELOW = 40;
+
+    private static void enlargeSidebarTabs(Container c) {
+        for (Component child : c.getComponents()) {
+            if (child instanceof javax.swing.JTabbedPane) {
+                javax.swing.JTabbedPane tp = (javax.swing.JTabbedPane) child;
+                boolean changed = false;
+                for (int i = 0; i < tp.getTabCount(); i++) {
+                    javax.swing.Icon ic = tp.getIconAt(i);
+                    if (!(ic instanceof javax.swing.ImageIcon)) continue;
+                    int w = ic.getIconWidth(), h = ic.getIconHeight();
+                    if (w <= 0 || h <= 0 || w >= ICON_SCALE_BELOW) continue;
+                    java.awt.Image img = ((javax.swing.ImageIcon) ic).getImage()
+                            .getScaledInstance(w * 2, h * 2, java.awt.Image.SCALE_SMOOTH);
+                    tp.setIconAt(i, new javax.swing.ImageIcon(img));
+                    changed = true;
+                }
+                if (changed) {
+                    tp.revalidate();
+                    tp.repaint();
+                    System.out.println("[WindowMaximizerAgent] enlarged sidebar tab icons");
+                }
+            }
+            if (child instanceof Container) enlargeSidebarTabs((Container) child);
+        }
+    }
+
     private static void sweep() {
         // The canvas rectangle now comes from rlawt, which sees it change in
         // the same frame the scene does. Reporting it from here as well meant
@@ -464,6 +504,11 @@ public class WindowMaximizerAgent {
             // repeatedly. Nothing here has any business resizing it.
             if (findGameCanvas(f) == null) continue;
             dumpLayoutOnce(f);
+            try {
+                enlargeSidebarTabs(f);
+            } catch (Throwable ignored) {
+                // The bar stays small; the sweep must go on regardless.
+            }
             try {
                 int curW = f.getWidth();
                 int curH = f.getHeight();
