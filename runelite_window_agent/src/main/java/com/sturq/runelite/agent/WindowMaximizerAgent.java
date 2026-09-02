@@ -452,28 +452,60 @@ public class WindowMaximizerAgent {
      *  ICON_SCALE_BELOW and is left alone. */
     private static final int ICON_SCALE_BELOW = 40;
 
-    private static void enlargeSidebarTabs(Container c) {
+    /** Only frames at least this wide get the doubled tabs. Portrait has a hard
+     *  budget the doubled tabs cannot fit: 1008 screen columns minus the
+     *  client's untouchable 765 canvas minimum leaves ~205 for the bar and an
+     *  open panel together, and exceeding it makes RuneLite pack the frame
+     *  wider while the sweep forces it back - 22 forced resizes in the log
+     *  before this guard existed. Landscape content is 2244; portrait is 970;
+     *  the threshold cleanly separates them. */
+    private static final int WIDE_FRAME_MIN_WIDTH = 1600;
+
+    /** Both directions of the swap, cached so rotating back and forth reuses
+     *  the same two icon objects instead of minting new ones every turn. */
+    private static final java.util.Map<javax.swing.Icon, javax.swing.Icon> sBigForOriginal =
+            new java.util.IdentityHashMap<>();
+    private static final java.util.Map<javax.swing.Icon, javax.swing.Icon> sOriginalForBig =
+            new java.util.IdentityHashMap<>();
+
+    private static void sizeSidebarTabs(Container c, boolean wide) {
         for (Component child : c.getComponents()) {
             if (child instanceof javax.swing.JTabbedPane) {
                 javax.swing.JTabbedPane tp = (javax.swing.JTabbedPane) child;
                 boolean changed = false;
                 for (int i = 0; i < tp.getTabCount(); i++) {
                     javax.swing.Icon ic = tp.getIconAt(i);
-                    if (!(ic instanceof javax.swing.ImageIcon)) continue;
-                    int w = ic.getIconWidth(), h = ic.getIconHeight();
-                    if (w <= 0 || h <= 0 || w >= ICON_SCALE_BELOW) continue;
-                    java.awt.Image img = ((javax.swing.ImageIcon) ic).getImage()
-                            .getScaledInstance(w * 2, h * 2, java.awt.Image.SCALE_SMOOTH);
-                    tp.setIconAt(i, new javax.swing.ImageIcon(img));
-                    changed = true;
+                    if (ic == null) continue;
+                    if (wide) {
+                        if (sOriginalForBig.containsKey(ic)) continue;
+                        if (!(ic instanceof javax.swing.ImageIcon)) continue;
+                        int w = ic.getIconWidth(), h = ic.getIconHeight();
+                        if (w <= 0 || h <= 0 || w >= ICON_SCALE_BELOW) continue;
+                        javax.swing.Icon big = sBigForOriginal.get(ic);
+                        if (big == null) {
+                            java.awt.Image img = ((javax.swing.ImageIcon) ic).getImage()
+                                    .getScaledInstance(w * 2, h * 2, java.awt.Image.SCALE_SMOOTH);
+                            big = new javax.swing.ImageIcon(img);
+                            sBigForOriginal.put(ic, big);
+                            sOriginalForBig.put(big, ic);
+                        }
+                        tp.setIconAt(i, big);
+                        changed = true;
+                    } else {
+                        javax.swing.Icon original = sOriginalForBig.get(ic);
+                        if (original == null) continue;
+                        tp.setIconAt(i, original);
+                        changed = true;
+                    }
                 }
                 if (changed) {
                     tp.revalidate();
                     tp.repaint();
-                    System.out.println("[WindowMaximizerAgent] enlarged sidebar tab icons");
+                    System.out.println("[WindowMaximizerAgent] sidebar tabs -> "
+                            + (wide ? "doubled" : "restored"));
                 }
             }
-            if (child instanceof Container) enlargeSidebarTabs((Container) child);
+            if (child instanceof Container) sizeSidebarTabs((Container) child, wide);
         }
     }
 
@@ -505,7 +537,7 @@ public class WindowMaximizerAgent {
             if (findGameCanvas(f) == null) continue;
             dumpLayoutOnce(f);
             try {
-                enlargeSidebarTabs(f);
+                sizeSidebarTabs(f, f.getWidth() >= WIDE_FRAME_MIN_WIDTH);
             } catch (Throwable ignored) {
                 // The bar stays small; the sweep must go on regardless.
             }
