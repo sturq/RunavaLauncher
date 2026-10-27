@@ -109,13 +109,13 @@ public class RuneLiteLauncherActivity extends Activity {
             String installed = MultiRTUtils.readInternalRuntimeVersion(JRE_NAME);
             String packaged = Tools.read(getAssets().open(JRE_ASSET_DIR + "/version"));
             if (packaged.equals(installed)) {
-                diag("JRE 21already installed v=" + installed);
+                diag("JRE already installed v=" + installed);
                 onReady.run();
                 return;
             }
-            diag("JRE 21needs install: packaged=" + packaged + " installed=" + installed);
+            diag("JRE needs install: packaged=" + packaged + " installed=" + installed);
         } catch (Throwable t) {
-            diag("JRE 21version check failed: " + t);
+            diag("JRE version check failed: " + t);
         }
 
         final ProgressDialog dlg = new ProgressDialog(this);
@@ -141,13 +141,13 @@ public class RuneLiteLauncherActivity extends Activity {
                 MultiRTUtils.installRuntimeNamedBinpack(uni, bin, JRE_NAME, packaged);
                 diag("JRE install thread: installRuntimeNamedBinpack done");
                 MultiRTUtils.postPrepare(JRE_NAME);
-                diag("JRE 21 unpacked OK, arch=" + arch + " v=" + packaged);
+                diag("JRE unpacked OK, arch=" + arch + " v=" + packaged);
             } catch (Throwable t) {
-                Log.e(TAG, "JRE 21 install failed", t);
+                Log.e(TAG, "JRE install failed", t);
                 StringWriter sw = new StringWriter();
                 t.printStackTrace(new PrintWriter(sw));
                 error = t + "\n" + sw;
-                diag("JRE 21 install FAILED: " + error);
+                diag("JRE install FAILED: " + error);
             }
             final String finalError = error;
             runOnUiThread(() -> {
@@ -305,7 +305,6 @@ public class RuneLiteLauncherActivity extends Activity {
     private void launchJar(File jar) {
         diag("launching jar: path=" + jar.getAbsolutePath() + " exists=" + jar.exists()
                 + " size=" + jar.length() + " canRead=" + jar.canRead());
-        Toast.makeText(this, "Launch: " + jar.length() + " bytes", Toast.LENGTH_LONG).show();
         Intent intent = new Intent(this, RuneLiteGameActivity.class);
         // --mode OPENGL: Java2D OpenGL backend. Doesn't enable RuneLite's GPU plugin
         // (that's a separate runtime toggle in the in-game plugin panel) but it

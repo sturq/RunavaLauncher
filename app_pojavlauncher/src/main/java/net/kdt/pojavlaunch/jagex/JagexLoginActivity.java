@@ -71,16 +71,25 @@ public class JagexLoginActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        mState = randomToken(12);
+        // The browser may outlive this process; a new state would reject its address.
+        mState = savedInstanceState == null ? randomToken(12) : savedInstanceState.getString("state");
         buildUi();
-        openBrowser();
+        if (savedInstanceState == null) openBrowser();
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
+    protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        out.putString("state", mState);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus) return;
         // Coming back from the browser with the address copied is the normal
-        // path, so take it without making the user press anything.
+        // path, so take it without making the user press anything. Not in
+        // onResume: Android 10+ denies the clipboard until the window has focus.
         String clip = readClipboard();
         if (clip != null && clip.contains("id_token=")) submit(clip);
     }

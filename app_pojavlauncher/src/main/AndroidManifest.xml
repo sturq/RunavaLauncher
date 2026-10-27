@@ -105,6 +105,7 @@
             android:screenOrientation="sensorLandscape" />
         <activity
             android:name=".RuneLiteLauncherActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
             android:exported="false" />
         <!-- singleTask so switching back from the browser returns to the instance
              that is already waiting, rather than restarting the login. -->
